@@ -24,3 +24,4 @@ _ide/.wsdata
 *.xsa
 arty_z7_hello_hw.gen/
 arty_z7_hello_hw.cache/
+*.runs/
