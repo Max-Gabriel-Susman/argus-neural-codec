@@ -25,3 +25,5 @@ _ide/.wsdata
 arty_z7_hello_hw.gen/
 arty_z7_hello_hw.cache/
 *.runs/
+rigel_lopper/
+_ide/
