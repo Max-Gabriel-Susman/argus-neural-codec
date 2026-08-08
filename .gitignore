@@ -22,12 +22,12 @@ _ide/.wsdata
 
 #Generated artifacts
 *.xsa
-arty_z7_hello_hw.gen/
-arty_z7_hello_hw.cache/
+argus_neural_codec.gen/
+argus_neural_codec.cache/
 *.runs/
 rigel_lopper/
 _ide/
-arty_z7_hello_hw.hw/
-arty_z7_hello_hw.ip_user_files/
 .srcs/sources_1/bd/design_1/ip/
-arty_z7_hello_hw.srcs/sources_1/bd/design_1/ip/
+argus_neural_codec.hw/
+argus_neural_codec.ip_user_files/
+argus_neural_codec.srcs/sources_1/bd/*/ip/
