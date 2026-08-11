@@ -3,8 +3,8 @@
     "design_info": {
       "boundary_crc": "0xCC6CFA53F622E079",
       "device": "xc7z020clg400-1",
-      "gen_directory": "../../../../argus_neural_codec.gen/sources_1/bd/design_1",
-      "name": "design_1",
+      "gen_directory": "../../../../argus_neural_codec.gen/sources_1/bd/neural_codec",
+      "name": "neural_codec",
       "rev_ctrl_bd_flag": "RevCtrlBdOff",
       "synth_flow_mode": "Hierarchical",
       "tool_version": "2026.1",
@@ -199,8 +199,8 @@
       "processing_system7_0": {
         "vlnv": "xilinx.com:ip:processing_system7:5.5",
         "ip_revision": "9",
-        "xci_name": "design_1_processing_system7_0_0",
-        "xci_path": "ip\\design_1_processing_system7_0_0\\design_1_processing_system7_0_0.xci",
+        "xci_name": "neural_codec_processing_system7_0_0",
+        "xci_path": "ip/neural_codec_processing_system7_0_0/neural_codec_processing_system7_0_0.xci",
         "inst_hier_path": "processing_system7_0",
         "has_run_ip_tcl": "true",
         "parameters": {

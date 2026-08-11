@@ -27,7 +27,6 @@ argus_neural_codec.cache/
 *.runs/
 rigel_lopper/
 _ide/
-.srcs/sources_1/bd/design_1/ip/
 argus_neural_codec.hw/
 argus_neural_codec.ip_user_files/
 argus_neural_codec.srcs/sources_1/bd/*/ip/
