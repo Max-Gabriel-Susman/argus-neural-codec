@@ -30,3 +30,14 @@ _ide/
 argus_neural_codec.hw/
 argus_neural_codec.ip_user_files/
 argus_neural_codec.srcs/sources_1/bd/*/ip/
+
+# xsim / xvhdl / xelab artifacts
+xsim.dir/
+xelab.*
+xvhdl.*
+xsim*.jou
+xsim*.log
+*.wdb
+*.str
+webtalk*.jou
+webtalk*.log
