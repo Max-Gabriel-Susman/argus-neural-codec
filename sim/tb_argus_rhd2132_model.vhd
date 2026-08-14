@@ -172,12 +172,12 @@ begin
         end loop;
         
         for i in 0 to 4 loop
-            report "chip identifier: " & ident & " (expect INTAN)";
             spi_xfer(cmd_read(40 + i), resp);
             spi_xfer(cmd_read(63), resp);
             spi_xfer(cmd_read(63), resp);
             ident(i + 1) := character'val(to_integer(unsigned(resp(7 downto 0))));
         end loop;
+        
         report "chip identifier: " & ident
             & " (expect INTAN -- register addresses unconfirmed)";
         
