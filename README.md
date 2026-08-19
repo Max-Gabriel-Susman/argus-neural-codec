@@ -5,3 +5,17 @@ The Argus Neural Codec contains the gateware configuration for neural coding and
 - [ ] 1. Migrate the current neural decoding logic from the Argus Safety Controller to the gateware in this repo while providing safe access to the gateware for the rest of the Argus Cybernetics Stack's ROS graph. This will target the Arty Z7'sPL.
 
 - [ ] 3. Modify the Argus Cybernetics Stack implementation to be a closed-loop interface(not sure what that's going to look like yet).
+
+## Simulation
+
+Testbenches in `sim/` run under [GHDL](https://github.com/ghdl/ghdl) rather than
+XSim — Vivado can't run on a hosted CI runner, and the RHD2132 model and its
+testbench are plain VHDL with no Xilinx primitives, so they don't need it. GHDL
+covers `rtl/` and `sim/` only; the `neural_codec` block design and the PS7
+instance are still validated on the workstation.
+```
+sudo apt-get install -y ghdl
+cd sim && make
+```
+Waveforms land in `sim/build/<testbench>.ghw` and are uploaded as CI artifacts
+on every run. `make synth` runs an advisory `ghdl --synth` elaboration check.
