@@ -87,4 +87,36 @@ jobs:
         run: vsg -f $(git ls-files '*.vhd' | grep -v '^argus_neural_codec\.')
 
   hygiene:
-        # needs additional impl
+    name: Repository hygiene
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+ 
+      - name: Reject CRLF line endings in tracked sources
+        run: |
+          set -euo pipefail
+          bad=()
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            if grep -qU $'\r' "$f"; then bad+=("$f"); fi
+          done < <(git ls-files -- '*.vhd' '*.xdc' '*.tcl' '*.sh' '*.py' '*.yml' '*.yaml')
+          if [ ${#bad[@]} -ne 0 ]; then
+            printf 'CRLF line endings found:\n'
+            printf '  %s\n' "${bad[@]}"
+            printf 'Fix with: sed -i "s/\\r$//" <file>\n'
+            exit 1
+          fi
+          echo "No CRLF found."
+ 
+      - name: Reject committed Vivado transient output
+        run: |
+          set -euo pipefail
+          bad=$(git ls-files -- \
+            '*.cache/*' '*.runs/*' '*.hw/*' '*.sim/*' '*.ip_user_files/*' \
+            'vivado*.log' 'vivado*.jou' 'vivado_pid*.str' || true)
+          if [ -n "$bad" ]; then
+            printf 'Vivado transient output is tracked:\n%s\n' "$bad"
+            exit 1
+          fi
+          echo "No transient Vivado output tracked."
