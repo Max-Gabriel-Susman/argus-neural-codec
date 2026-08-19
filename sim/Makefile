@@ -1,19 +1,3 @@
-# +---------------------------------------------------------------------------+
-# |	 Sim/Makefile: GHDL driver for the argus_neural_codec testbenches.	      |
-# |																		      |
-# |	 Runs identically locally and in CI. From this directory:---.		      |
-# |	 ___________________________________________________________|		      |
-# |	 |	   ____________________________________________________________       |
-# |  |    /															    \     |
-# |	 |   /  make						-> analyze & run every tb_*.vhd  \	  |    
-# |  |  /																  \   |
-# |	 `-{    make tb_argus_rhd2132_model -> Run one testbench by name.	   |  |
-# |     \									    						  /   |
-# |		 \  make synth				    -> Synthesis elaboration check.  /    |
-# |		  \_____________________________________________________________/	  |
-# | 																		  |
-# +---------------------------------------------------------------------------+
-
 GHDL      ?= ghdl
 STD       ?= 08
 WORKDIR   ?= build
