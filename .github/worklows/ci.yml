@@ -1,0 +1,90 @@
+name: argus_neural_codec CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHDL_VERSION: "6.0.0"
+
+jobs:
+  simulate:
+    name: GHDL testbenches
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup GHDL
+        uses: ghdl/setup-ghdl@v1
+        with:
+          version: ${{ env.GHDL_VERSION }}
+          backend: mcode
+
+      - name: Report toolchain
+        run: ghdl --version
+
+      - name: Analyze and run testbenches
+        working-directory: sim
+        run: make run
+
+      - name: Upload waveforms
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghdl-waveforms
+          path: sim/build/*.ghw
+          if-no-files-found: ignore
+          retention-days: 7
+
+  synth-check:
+    # Currently catches drift only for simulation constructs
+    # set `continue-on-error` to false for a hard gate.
+    name: GHDL synthesis check (advisory)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup GHDL
+        uses: ghdl/setup-ghdl@v1
+        with:
+          version: ${{ env.GHDL_VERSION }}
+          backend: mcode
+
+      - name: Elaborate RTL for synthesis
+        working-directory: sim
+        run: make synth
+
+  lint:
+    name: VSG style lint (advisory)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install VHDL style guide
+        run: pip install VSG
+      
+      - name: Lint
+        run: vsg -f $(git ls-files '*.vhd' | grep -v '^argus_neural_codec\.')
+
+  hygiene:
+        # needs additional impl
