@@ -9,24 +9,24 @@ entity argus_rhd2132_model is
     generic (
         CH_PER_CHIP : natural := 32;
         CHIP_ID : natural := 0;
-        CHIP_TYPE_ID : natural := 1; 
+        CHIP_TYPE_ID : natural := 1;
         DIE_REVISION : natural := 1;
 
         PATTERN : natural := 0
         );
         port (
-            clk : in std_logic;
-            rst_n : in std_logic;
+            clk : in    std_logic;
+            rst_n : in    std_logic;
 
-            sclk : in std_logic;
-            cs_n : in std_logic;
-            mosi : in std_logic;
-            miso : out std_logic;
-            miso_oe : out std_logic; -- '1' when the model is driving the line
+            sclk : in    std_logic;
+            cs_n : in    std_logic;
+            mosi : in    std_logic;
+            miso : out   std_logic;
+            miso_oe : out   std_logic; -- '1' when the model is driving the line
 
-            dbg_last_cmd : out std_logic_vector(15 downto 0);
-            dbg_cmd_valid : out std_logic;
-            dbg_last_resp : out std_logic_vector(15 downto 0)
+            dbg_last_cmd : out   std_logic_vector(15 downto 0);
+            dbg_cmd_valid : out   std_logic;
+            dbg_last_resp : out   std_logic_vector(15 downto 0)
         );
     end entity argus_rhd2132_model;
 
@@ -51,7 +51,7 @@ entity argus_rhd2132_model is
         type regfile_t is array (0 to 63) of std_logic_vector(7 downto 0);
 
         function init_regfile return regfile_t is
-            variable r : regfile_t := (others => (others => '0'));
+            variable r : regfile_t;
         begin
             r := (others => (others => '0'));
             r(40) := std_logic_vector(to_unsigned(character'pos('I'), 8));
@@ -59,7 +59,7 @@ entity argus_rhd2132_model is
             r(42) := std_logic_vector(to_unsigned(character'pos('T'), 8));
             r(43) := std_logic_vector(to_unsigned(character'pos('A'), 8));
             r(44) := std_logic_vector(to_unsigned(character'pos('N'), 8));
-            
+
             r(60) := std_logic_vector(to_unsigned(DIE_REVISION, 8));
             r(61) := std_logic_vector(to_unsigned(1, 8));
             r(62) := std_logic_vector(to_unsigned(CH_PER_CHIP, 8));
@@ -80,44 +80,46 @@ entity argus_rhd2132_model is
         begin
             -- Channels at or above the amplifier count are auxillary sensors
             -- (auxin1-3 on 32-34), supply voltage on 48, temperature on 49).
-            -- These are always unsigned and never affected by twoscomp. A   
+            -- These are always unsigned and never affected by twoscomp. A
             -- Distinctive contant makes  a mis-slotted auxillary command obvious.
-            if to_integer(unsigned(ch)) >= n_chan then
+            if (to_integer(unsigned(ch)) >= n_chan) then
                 return x"A0" & "00" & ch;
             end if;
 
-            if pat = PATTERN_RAMP then
+            if (pat = PATTERN_RAMP) then
                 phase := unsigned(sample_idx) + resize(unsigned(ch), 8);
-                
+
                 ramp := shift_left(resize(signed(phase), 16), 6);
-                if regs(REG_CONFIG)(R4_TWOSCOMP) = '1' then
+                if (regs(REG_CONFIG)(R4_TWOSCOMP) = '1') then
                     return std_logic_vector(ramp);
                 else
                     return std_logic_vector(unsigned(ramp) + x"8000");
                 end if;
-            else 
-                -- IDENT deliberately ignores twoscomp; it is an identitytag, not
-                -- a signal, and must stay byte-comparable across format changes.
+            else
                 return std_logic_vector(to_unsigned(chip mod 4, 2)) & ch & sample_idx;
             end if;
         end function sample_value;
 
-        function idle_result (regs : regfile_t) return std_logic_vector is
-            variable v : std_logic_vector(15 downto 0) := (others => '0');
+        function idle_result (
+            regs : regfile_t
+        ) return std_logic_vector is
+            variable v : std_logic_vector(15 downto 0);
         begin
             v := (others => '0');
             v(15) := not regs(REG_CONFIG)(R4_TWOSCOMP);
             return v;
         end function idle_result;
 
-        function is_ram_register (addr : std_logic_vector(5 downto 0)) return boolean is
+        function is_ram_register (
+            addr : std_logic_vector(5 downto 0)
+            ) return boolean is
         begin
             return to_integer(unsigned(addr)) < N_RAM_REGISTERS;
         end function is_ram_register;
 
         function rhd_response (
             cmd : std_logic_vector(15 downto 0);
-            mux_ch : std_logic_vector(5 downto 0); --resolved channel
+            mux_ch : std_logic_vector(5 downto 0); -- resolved channel
             sample_idx :std_logic_vector(7 downto 0);
             regs : regfile_t;
             chip : natural;
@@ -137,9 +139,9 @@ entity argus_rhd2132_model is
                     return idle_result(regs);
             end case;
         end function rhd_response;
-        
-        signal sclk_q : std_logic := '0';
-        signal cs_n_q : std_logic := '1';
+
+        signal sclk_q : std_logic;
+        signal cs_n_q : std_logic;
 
         signal sclk_rise : std_logic;
         signal sclk_fall : std_logic;
@@ -154,6 +156,7 @@ entity argus_rhd2132_model is
         signal resp_last : std_logic_vector(15 downto 0);
 
         signal sample_idx : std_logic_vector(7 downto 0);
+        -- vsg_disable_next_line signal_007
         signal regfile : regfile_t := init_regfile;
         signal last_cmd : std_logic_vector(15 downto 0);
         signal cmd_valid : std_logic;
@@ -166,16 +169,14 @@ entity argus_rhd2132_model is
         cs_assert <= (not cs_n) and cs_n_q;
         cs_deassert <= cs_n and (not cs_n_q);
 
-        process (clk)
+        spi_slave : process (clk) is
             variable conv_ch : unsigned(5 downto 0);
         begin
             if rising_edge(clk) then
                 sclk_q <= sclk;
                 cs_n_q <= cs_n;
-                regfile <= init_regfile;
-                shift_in <= (others => '0');
 
-                if rst_n = '0' then
+                if (rst_n = '0') then
                     shift_in <= (others => '0');
                     shift_out <= (others => '0');
                     bit_cnt <= (others => '0');
@@ -186,33 +187,34 @@ entity argus_rhd2132_model is
                     mux_ch <= (others => '0');
                     cal_countdown <= (others => '0');
                     cmd_valid <= '0';
+                    shift_in <= (others => '0');
 
                 else
                     cmd_valid <= '0';
 
-                    if cs_assert = '1' then
+                    if (cs_assert = '1') then
                         bit_cnt <= (others => '0');
                         shift_out <= resp_prev;
                         shift_in <= (others => '0');
                     end if;
 
-                    if cs_n = '0' then
-                        if sclk_rise = '1' then
+                    if (cs_n = '0') then
+                        if (sclk_rise = '1') then
                             shift_in <= shift_in(14 downto 0) & mosi;
                             bit_cnt <= bit_cnt + 1;
                         end if;
 
-                        if (sclk_fall = '1') and (bit_cnt /= 0) then
+                        if ((sclk_fall = '1') and (bit_cnt /= 0)) then
                             shift_out <= shift_out(14 downto 0) & '0';
                         end if;
-                    end if; 
+                    end if;
                     -- End of frame: retire the command and advance the pipeline.
-                    if (cs_deassert = '1') and (bit_cnt = 16) then
+                    if ((cs_deassert = '1') and (bit_cnt = 16)) then
                         last_cmd  <= shift_in;
                         cmd_valid <= '1';
                         conv_ch   := unsigned(shift_in(13 downto 8));
 
-                        if cal_countdown /= 0 then
+                        if (cal_countdown /= 0) then
                             -- The nine commands following CALIBRATE are consumed
                             -- but not executed; the chip ignores everything until
                             -- calibration completes.
@@ -220,11 +222,11 @@ entity argus_rhd2132_model is
                             resp_last     <= idle_result(regfile);
                             resp_prev     <= resp_last;
                         else
-                            if shift_in(15 downto 14) = OP_CONVERT then
+                            if (shift_in(15 downto 14) = OP_CONVERT) then
                                 -- CONVERT(63) advances the multiplexer rather than
                                 -- naming a channel, wrapping past the last amplifier.
-                                if conv_ch = 63 then
-                                    if mux_ch = CH_PER_CHIP - 1 then
+                                if (conv_ch = 63) then
+                                    if (mux_ch = CH_PER_CHIP - 1) then
                                         conv_ch := (others => '0');
                                     else
                                         conv_ch := mux_ch + 1;
@@ -232,20 +234,20 @@ entity argus_rhd2132_model is
                                 end if;
                                 mux_ch <= conv_ch;
 
-                                if conv_ch = CH_PER_CHIP - 1 then
+                                if (conv_ch = CH_PER_CHIP - 1) then
                                     sample_idx <= std_logic_vector(unsigned(sample_idx) + 1);
                                 end if;
                             end if;
 
                             -- Writes to ROM or non-existent registers are
                             -- acknowledged in the result but discarded.
-                            if (shift_in(15 downto 14) = OP_WRITE)
-                               and is_ram_register(shift_in(13 downto 8)) then
+                            if ((shift_in(15 downto 14) = OP_WRITE)
+                               and is_ram_register(shift_in(13 downto 8))) then
                                 regfile(to_integer(unsigned(shift_in(13 downto 8))))
                                     <= shift_in(7 downto 0);
                             end if;
 
-                            if shift_in = CMD_CALIBRATE then
+                            if (shift_in = CMD_CALIBRATE) then
                                 cal_countdown <= to_unsigned(9, 4);
                             end if;
 
@@ -258,12 +260,13 @@ entity argus_rhd2132_model is
                     end if;
                 end if;      -- rst_n
             end if;          -- rising_edge(clk)
-        end process;
+        end process spi_slave;
 
         -- Register 4 weak MISO: 0 releases the line to high impedance when
         -- CS is high so chips can share a return path; 1 drives it weakly.
         miso <= shift_out(15);
-        miso_oe <= '1' when cs_n = '0' else regfile(REG_CONFIG)(R4_WEAK_MISO);
+        miso_oe <= '1' when cs_n = '0' else
+            regfile(REG_CONFIG)(R4_WEAK_MISO);
 
         dbg_last_cmd <= last_cmd;
         dbg_cmd_valid <= cmd_valid;
