@@ -53,6 +53,7 @@ entity argus_rhd2132_model is
         function init_regfile return regfile_t is
             variable r : regfile_t := (others => (others => '0'));
         begin
+            r := (others => (others => '0'));
             r(40) := std_logic_vector(to_unsigned(character'pos('I'), 8));
             r(41) := std_logic_vector(to_unsigned(character'pos('N'), 8));
             r(42) := std_logic_vector(to_unsigned(character'pos('T'), 8));
@@ -104,6 +105,7 @@ entity argus_rhd2132_model is
         function idle_result (regs : regfile_t) return std_logic_vector is
             variable v : std_logic_vector(15 downto 0) := (others => '0');
         begin
+            v := (others => '0');
             v(15) := not regs(REG_CONFIG)(R4_TWOSCOMP);
             return v;
         end function idle_result;
@@ -144,20 +146,20 @@ entity argus_rhd2132_model is
         signal cs_assert : std_logic;
         signal cs_deassert : std_logic;
 
-        signal shift_in : std_logic_vector(15 downto 0) := (others => '0');
-        signal shift_out : std_logic_vector(15 downto 0) := (others => '0');
-        signal bit_cnt : unsigned(4 downto 0) := (others => '0');
+        signal shift_in : std_logic_vector(15 downto 0);
+        signal shift_out : std_logic_vector(15 downto 0);
+        signal bit_cnt : unsigned(4 downto 0);
 
-        signal resp_prev : std_logic_vector(15 downto 0) := (others => '0');
-        signal resp_last : std_logic_vector(15 downto 0) := (others => '0');
+        signal resp_prev : std_logic_vector(15 downto 0);
+        signal resp_last : std_logic_vector(15 downto 0);
 
-        signal sample_idx : std_logic_vector(7 downto 0) := (others => '0');
+        signal sample_idx : std_logic_vector(7 downto 0);
         signal regfile : regfile_t := init_regfile;
-        signal last_cmd : std_logic_vector(15 downto 0) := (others => '0');
-        signal cmd_valid : std_logic := '0';
+        signal last_cmd : std_logic_vector(15 downto 0);
+        signal cmd_valid : std_logic;
 
-        signal mux_ch : unsigned(5 downto 0) := (others => '0');
-        signal cal_countdown : unsigned(3 downto 0) := (others => '0');
+        signal mux_ch : unsigned(5 downto 0);
+        signal cal_countdown : unsigned(3 downto 0);
     begin
         sclk_rise <= sclk and not sclk_q;
         sclk_fall <= (not sclk) and sclk_q;
@@ -170,6 +172,8 @@ entity argus_rhd2132_model is
             if rising_edge(clk) then
                 sclk_q <= sclk;
                 cs_n_q <= cs_n;
+                regfile <= init_regfile;
+                shift_in <= (others => '0');
 
                 if rst_n = '0' then
                     shift_in <= (others => '0');
