@@ -15,7 +15,7 @@ TBS := $(basename $(notdir $(SIM_SRCS)))
 # never appear here.
 SYNTH_TOPS ?= argus_rhd2132_model
 
-GHDL_FLAGS := --std=$(STD) --workdir=$(WORKDIR) -frelaxed -Wall
+GHDL_FLAGS := --std=$(STD) --workdir=$(WORKDIR) -frelaxed
 
 # --assert-level defaults to `error`, which would halt at the first mismatch
 # and hide the rest. The testbenches count their own failures and end with a
