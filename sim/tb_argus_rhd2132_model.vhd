@@ -22,6 +22,7 @@ architecture sim of tb_argus_rhd2132_model is
   constant op_convert : std_logic_vector(1 downto 0) := "00";
   constant op_read    : std_logic_vector(1 downto 0) := "11";
 
+  -- vsg_off signal_007
   signal clk   : std_logic := '0';
   signal rst_n : std_logic := '0';
 
@@ -36,6 +37,7 @@ architecture sim of tb_argus_rhd2132_model is
   signal dbg_last_resp : std_logic_vector(15 downto 0);
 
   signal sim_done : boolean := false;
+  -- vsg_on signal_007
 
   function hex4 (
     v : std_logic_vector(15 downto 0)
@@ -97,7 +99,7 @@ begin
   clk <= not clk after clk_period / 2 when not sim_done else
          '0';
 
-  dut : entity work.argus_rhd2132_model
+  dut : entity work.argus_rhd2132_model(rtl)
     generic map (
       ch_per_chip => CH_PER_CHIP,
       chip_id     => CHIP_ID,
@@ -122,20 +124,24 @@ begin
     variable cmd     : std_logic_vector(15 downto 0);
     variable exp_new : std_logic_vector(15 downto 0);
 
+    -- vsg_off variable_007
     variable exp_d1 : std_logic_vector(15 downto 0) := (others => '0');
     variable exp_d2 : std_logic_vector(15 downto 0) := (others => '0');
 
     variable primed     : natural              := 0;
     variable golden_idx : unsigned(7 downto 0) := (others => '0');
     variable errors     : natural              := 0;
-    variable ident      : string(1 to 5);
+    -- vsg_on variable_007
+    variable ident : string(1 to 5);
 
     procedure spi_xfer (
       cmd_in : in std_logic_vector(15 downto 0);
       r      : out std_logic_vector(15 downto 0)
     ) is
 
+      -- vsg_off variable_007
       variable acc : std_logic_vector(15 downto 0) := (others => '0');
+    -- vsg_on variable_007
 
     begin
 

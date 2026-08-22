@@ -67,24 +67,24 @@ jobs:
         working-directory: sim
         run: make synth
 
-#  lint:
-#    name: VSG style lint (advisory)
-#    runs-on: ubuntu-24.04
-#    continue-on-error: true
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v4
-#
-#      - name: Setup Python
-#        uses: actions/setup-python@v5
-#        with:
-#          python-version: '3.12'
-#
-#      - name: Install VHDL style guide
-#        run: pip install VSG
-#      
-#      - name: Lint
-#        run: vsg -f $(git ls-files '*.vhd' | grep -v '^argus_neural_codec\.')
+  lint:
+    name: VSG style lint (advisory)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install VHDL style guide
+        run: pip install VSG
+      
+      - name: Lint
+        run: vsg -f $(git ls-files '*.vhd' | grep -v '^argus_neural_codec\.') -c vsg.yaml
 
   hygiene:
     name: Repository hygiene
