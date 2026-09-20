@@ -48,18 +48,18 @@ end entity tb_argus_rhd_spi_master;
 
 architecture sim of tb_argus_rhd_spi_master is
 
-  constant CHIP_COUNT  : natural := 3;
-  constant CH_PER_CHIP : natural := 32;
-  constant AUX_SLOTS   : natural := 3;
-  constant SLOT_CLOCKS : natural := 119;
-  constant SCLK_DIV    : natural := 5;
+  constant chip_count  : natural := 3;
+  constant ch_per_chip : natural := 32;
+  constant aux_slots   : natural := 3;
+  constant slot_clocks : natural := 119;
+  constant sclk_div    : natural := 5;
 
-  constant CLK_PERIOD : time    := 8 ns;   -- 125 MHz
-  constant SWEEPS     : natural := 4;
+  constant clk_period : time    := 8 ns;   -- 125 MHz
+  constant sweeps     : natural := 4;
 
   -- Datasheet minimums, checked against the measured waveform.
-  constant TSCLK_MIN  : time := 40 ns;
-  constant TCSOFF_MIN : time := 154 ns;
+  constant tsclk_min  : time := 40 ns;
+  constant tcsoff_min : time := 154 ns;
 
   signal clk    : std_logic := '0';
   signal rst_n  : std_logic := '0';
@@ -68,13 +68,13 @@ architecture sim of tb_argus_rhd_spi_master is
   signal sclk : std_logic;
   signal cs_n : std_logic;
   signal mosi : std_logic;
-  signal miso : std_logic_vector(CHIP_COUNT - 1 downto 0);
+  signal miso : std_logic_vector(chip_count - 1 downto 0);
 
-  signal miso_oe : std_logic_vector(CHIP_COUNT - 1 downto 0);
+  signal miso_oe : std_logic_vector(chip_count - 1 downto 0);
 
   signal slot_valid   : std_logic;
   signal slot_channel : unsigned(5 downto 0);
-  signal slot_data    : std_logic_vector(CHIP_COUNT * 16 - 1 downto 0);
+  signal slot_data    : std_logic_vector(chip_count * 16 - 1 downto 0);
   signal slot_is_aux  : std_logic;
   signal slot_last    : std_logic;
   signal ready        : std_logic;
@@ -85,9 +85,11 @@ architecture sim of tb_argus_rhd_spi_master is
   signal check_errors : natural := 0;
   signal time_errors  : natural := 0;
 
-  function hex4 (v : std_logic_vector(15 downto 0)) return string is
+  function hex4 (
+    v : std_logic_vector(15 downto 0)
+  ) return string is
 
-    constant DIGITS : string(1 to 16) := "0123456789ABCDEF";
+    constant digits : string(1 to 16) := "0123456789ABCDEF";
     variable s      : string(1 to 4);
     variable nib    : integer;
 
@@ -106,6 +108,7 @@ architecture sim of tb_argus_rhd_spi_master is
 
   -- IDENT layout, from the specification rather than from the model:
   --   bits 15:14 chip, 13:8 channel, 7:0 sample index.
+
   function ident_word (
     chip : natural;
     ch   : unsigned(5 downto 0);
@@ -120,7 +123,10 @@ architecture sim of tb_argus_rhd_spi_master is
   end function ident_word;
 
   -- Auxiliary marker, for channels at or above the amplifier count.
-  function aux_word (ch : unsigned(5 downto 0)) return std_logic_vector is
+
+  function aux_word (
+    ch : unsigned(5 downto 0)
+  ) return std_logic_vector is
   begin
 
     return x"A0" & "00" & std_logic_vector(ch);
@@ -129,7 +135,8 @@ architecture sim of tb_argus_rhd_spi_master is
 
 begin
 
-  clk <= not clk after CLK_PERIOD / 2 when not sim_done else '0';
+  clk <= not clk after clk_period / 2 when not sim_done else
+         '0';
 
   --------------------------------------------------------------------------
   -- Device under test
@@ -137,11 +144,11 @@ begin
 
   dut : entity work.argus_rhd_spi_master
     generic map (
-      CHIP_COUNT  => CHIP_COUNT,
-      CH_PER_CHIP => CH_PER_CHIP,
-      AUX_SLOTS   => AUX_SLOTS,
-      SLOT_CLOCKS => SLOT_CLOCKS,
-      SCLK_DIV    => SCLK_DIV
+      chip_count  => CHIP_COUNT,
+      ch_per_chip => CH_PER_CHIP,
+      aux_slots   => AUX_SLOTS,
+      slot_clocks => SLOT_CLOCKS,
+      sclk_div    => SCLK_DIV
     )
     port map (
       clk          => clk,
@@ -163,14 +170,14 @@ begin
   -- Three chips on the broadcast bus, distinguished only by CHIP_ID
   --------------------------------------------------------------------------
 
-  chips : for c in 0 to CHIP_COUNT - 1 generate
+  chips : for c in 0 to chip_count - 1 generate
 
     chip_inst : entity work.argus_rhd2132_model
       generic map (
-        CH_PER_CHIP  => CH_PER_CHIP,
-        CHIP_ID      => c,
-        CHIP_TYPE_ID => 1,
-        PATTERN      => 0
+        ch_per_chip  => CH_PER_CHIP,
+        chip_id      => c,
+        chip_type_id => 1,
+        pattern      => 0
       )
       port map (
         clk           => clk,
@@ -204,17 +211,17 @@ begin
 
   begin
 
-    rst_n <= '0';
-    wait for 20 * CLK_PERIOD;
-    rst_n <= '1';
-    wait for 20 * CLK_PERIOD;
+    rst_n  <= '0';
+    wait for 20 * clk_period;
+    rst_n  <= '1';
+    wait for 20 * clk_period;
     enable <= '1';
 
     report "waiting for initialisation sequence";
     wait until ready = '1';
     report "ready asserted; sweeping";
 
-    while sweep < SWEEPS loop
+    while sweep < sweeps loop
 
       wait until rising_edge(clk) and slot_valid = '1';
       slots := slots + 1;
@@ -229,8 +236,7 @@ begin
           severity error;
       end if;
 
-      if (expect_ch >= CH_PER_CHIP) then
-
+      if (expect_ch >= ch_per_chip) then
         -- Auxiliary slot: every lane returns the marker, flag must be set.
         if (slot_is_aux /= '1') then
           errs := errs + 1;
@@ -239,7 +245,7 @@ begin
             severity error;
         end if;
 
-        for c in 0 to CHIP_COUNT - 1 loop
+        for c in 0 to chip_count - 1 loop
 
           word := slot_data(c * 16 + 15 downto c * 16);
 
@@ -255,7 +261,6 @@ begin
         end loop;
 
       else
-
         if (slot_is_aux /= '0') then
           errs := errs + 1;
           report "FAIL channel " & integer'image(expect_ch)
@@ -282,7 +287,7 @@ begin
 
         -- Chip lane identity. Each model stamps its own CHIP_ID, so crossed
         -- MISO lines fail here and nowhere else.
-        for c in 0 to CHIP_COUNT - 1 loop
+        for c in 0 to chip_count - 1 loop
 
           word := slot_data(c * 16 + 15 downto c * 16);
 
@@ -300,7 +305,7 @@ begin
 
         -- slot_last marks the final amplifier channel, which is what a frame
         -- assembler keys its frame boundary off.
-        if (expect_ch = CH_PER_CHIP - 1) then
+        if (expect_ch = ch_per_chip - 1) then
           if (slot_last /= '1') then
             errs := errs + 1;
             report "FAIL sweep " & integer'image(sweep)
@@ -314,12 +319,11 @@ begin
                  & ": slot_last set early"
             severity error;
         end if;
-
       end if;
 
       check_errors <= errs;
 
-      if (expect_ch = CH_PER_CHIP + AUX_SLOTS - 1) then
+      if (expect_ch = ch_per_chip + aux_slots - 1) then
         expect_ch := 0;
         sweep     := sweep + 1;
       else
@@ -334,7 +338,7 @@ begin
     wait for 1 ns;
 
     report "checked " & integer'image(slots) & " slots over "
-           & integer'image(SWEEPS) & " sweeps";
+           & integer'image(sweeps) & " sweeps";
 
     if ((check_errors = 0) and (time_errors = 0)) then
       report "PASS: pipeline, chip lanes, sweep coherence and aux slots verified";
@@ -376,10 +380,10 @@ begin
 
           -- Only consecutive edges within one command are meaningful; the
           -- gap across a CS pulse is much larger and is skipped.
-          if ((measured < TSCLK_MIN) and (measured < 200 ns)) then
+          if ((measured < tsclk_min) and (measured < 200 ns)) then
             errs := errs + 1;
             report "FAIL tSCLK " & time'image(measured)
-                   & " below the " & time'image(TSCLK_MIN) & " minimum"
+                   & " below the " & time'image(tsclk_min) & " minimum"
               severity error;
           end if;
         end if;
@@ -392,10 +396,10 @@ begin
       elsif ((cs_n = '0') and (t_cs_rise /= 0 ns)) then
         measured := now - t_cs_rise;
 
-        if (measured < TCSOFF_MIN) then
+        if (measured < tcsoff_min) then
           errs := errs + 1;
           report "FAIL tCSOFF " & time'image(measured)
-                 & " below the " & time'image(TCSOFF_MIN) & " minimum"
+                 & " below the " & time'image(tcsoff_min) & " minimum"
             severity error;
         end if;
       end if;
@@ -418,8 +422,9 @@ begin
 
     wait for 20 ms;
 
-    if not sim_done then
-      report "FAIL: timeout" severity failure;
+    if (not sim_done) then
+      report "FAIL: timeout"
+        severity failure;
     end if;
 
     wait;
