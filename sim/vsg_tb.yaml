@@ -1,0 +1,17 @@
+# Testbench-only relaxations.
+#
+# signal_007 / variable_007: default assignments are how a testbench
+# initialises its clock and reset. Removing them leaves 'U' and the
+# simulation silently does nothing.
+#
+# instantiation_034 / 036: direct entity instantiation is deliberate.
+# Component declarations would duplicate every port list.
+rule :
+  signal_007 :
+    disable : True
+  variable_007 :
+    disable : True
+  instantiation_034 :
+    disable : True
+  instantiation_036 :
+    disable : True
