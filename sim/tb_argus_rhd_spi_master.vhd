@@ -33,6 +33,9 @@
 --   5. TIMING. SCLK period, CS-high duration and slot period are measured
 --      against the datasheet minimums rather than assumed from the generics.
 --
+-- The error counters are split per process. An unresolved signal type admits
+-- exactly one driver, so a single shared counter fails elaboration.
+--
 -- Run: make tb_argus_rhd_spi_master   (from sim/)
 --------------------------------------------------------------------------------
 
@@ -51,7 +54,7 @@ architecture sim of tb_argus_rhd_spi_master is
   constant SLOT_CLOCKS : natural := 119;
   constant SCLK_DIV    : natural := 5;
 
-  constant CLK_PERIOD : time := 8 ns;      -- 125 MHz
+  constant CLK_PERIOD : time    := 8 ns;   -- 125 MHz
   constant SWEEPS     : natural := 4;
 
   -- Datasheet minimums, checked against the measured waveform.
@@ -77,7 +80,10 @@ architecture sim of tb_argus_rhd_spi_master is
   signal ready        : std_logic;
 
   signal sim_done : boolean := false;
-  signal errors   : natural := 0;
+
+  -- One counter per driving process.
+  signal check_errors : natural := 0;
+  signal time_errors  : natural := 0;
 
   function hex4 (v : std_logic_vector(15 downto 0)) return string is
 
@@ -194,6 +200,7 @@ begin
     variable have_prev : boolean := false;
     variable word      : std_logic_vector(15 downto 0);
     variable slots     : natural := 0;
+    variable errs      : natural := 0;
 
   begin
 
@@ -215,7 +222,7 @@ begin
       -- Channel identity. The master must name the channel the data belongs
       -- to; a two-slot rotation lands here.
       if (to_integer(slot_channel) /= expect_ch) then
-        errors <= errors + 1;
+        errs := errs + 1;
         report "FAIL sweep " & integer'image(sweep)
                & ": slot_channel " & integer'image(to_integer(slot_channel))
                & ", expected " & integer'image(expect_ch)
@@ -226,7 +233,7 @@ begin
 
         -- Auxiliary slot: every lane returns the marker, flag must be set.
         if (slot_is_aux /= '1') then
-          errors <= errors + 1;
+          errs := errs + 1;
           report "FAIL channel " & integer'image(expect_ch)
                  & ": slot_is_aux not set"
             severity error;
@@ -235,8 +242,9 @@ begin
         for c in 0 to CHIP_COUNT - 1 loop
 
           word := slot_data(c * 16 + 15 downto c * 16);
+
           if (word /= aux_word(slot_channel)) then
-            errors <= errors + 1;
+            errs := errs + 1;
             report "FAIL aux ch " & integer'image(expect_ch)
                    & " chip " & integer'image(c)
                    & ": " & hex4(word)
@@ -249,7 +257,7 @@ begin
       else
 
         if (slot_is_aux /= '0') then
-          errors <= errors + 1;
+          errs := errs + 1;
           report "FAIL channel " & integer'image(expect_ch)
                  & ": slot_is_aux set on an amplifier channel"
             severity error;
@@ -261,7 +269,7 @@ begin
           sweep_idx := unsigned(slot_data(7 downto 0));
 
           if (have_prev and (sweep_idx /= prev_idx + 1)) then
-            errors <= errors + 1;
+            errs := errs + 1;
             report "FAIL sweep " & integer'image(sweep)
                    & ": sample index " & integer'image(to_integer(sweep_idx))
                    & " does not follow " & integer'image(to_integer(prev_idx))
@@ -277,8 +285,9 @@ begin
         for c in 0 to CHIP_COUNT - 1 loop
 
           word := slot_data(c * 16 + 15 downto c * 16);
+
           if (word /= ident_word(c, slot_channel, sweep_idx)) then
-            errors <= errors + 1;
+            errs := errs + 1;
             report "FAIL sweep " & integer'image(sweep)
                    & " ch " & integer'image(expect_ch)
                    & " chip " & integer'image(c)
@@ -293,13 +302,13 @@ begin
         -- assembler keys its frame boundary off.
         if (expect_ch = CH_PER_CHIP - 1) then
           if (slot_last /= '1') then
-            errors <= errors + 1;
+            errs := errs + 1;
             report "FAIL sweep " & integer'image(sweep)
                    & ": slot_last not set on the last amplifier channel"
               severity error;
           end if;
         elsif (slot_last /= '0') then
-          errors <= errors + 1;
+          errs := errs + 1;
           report "FAIL sweep " & integer'image(sweep)
                  & " ch " & integer'image(expect_ch)
                  & ": slot_last set early"
@@ -307,6 +316,8 @@ begin
         end if;
 
       end if;
+
+      check_errors <= errs;
 
       if (expect_ch = CH_PER_CHIP + AUX_SLOTS - 1) then
         expect_ch := 0;
@@ -317,13 +328,19 @@ begin
 
     end loop;
 
+    check_errors <= errs;
+
+    -- Let the timing process's last increment settle before reading totals.
+    wait for 1 ns;
+
     report "checked " & integer'image(slots) & " slots over "
            & integer'image(SWEEPS) & " sweeps";
 
-    if (errors = 0) then
+    if ((check_errors = 0) and (time_errors = 0)) then
       report "PASS: pipeline, chip lanes, sweep coherence and aux slots verified";
     else
-      report "FAIL: " & integer'image(errors) & " error(s)"
+      report "FAIL: " & integer'image(check_errors) & " stream error(s), "
+             & integer'image(time_errors) & " timing error(s)"
         severity failure;
     end if;
 
@@ -338,11 +355,10 @@ begin
 
   timing : process is
 
-    variable t_sclk_rise : time := 0 ns;
-    variable t_cs_rise   : time := 0 ns;
-    variable t_cs_fall   : time := 0 ns;
+    variable t_sclk_rise : time    := 0 ns;
+    variable t_cs_rise   : time    := 0 ns;
     variable measured    : time;
-    variable checked     : natural := 0;
+    variable errs        : natural := 0;
 
   begin
 
@@ -352,20 +368,20 @@ begin
 
       wait until rising_edge(sclk) or rising_edge(cs_n) or falling_edge(cs_n);
 
-      if (sclk = '1' and cs_n = '0') then
+      exit when sim_done;
+
+      if ((sclk = '1') and (cs_n = '0')) then
         if (t_sclk_rise /= 0 ns) then
           measured := now - t_sclk_rise;
 
           -- Only consecutive edges within one command are meaningful; the
           -- gap across a CS pulse is much larger and is skipped.
           if ((measured < TSCLK_MIN) and (measured < 200 ns)) then
-            errors <= errors + 1;
+            errs := errs + 1;
             report "FAIL tSCLK " & time'image(measured)
                    & " below the " & time'image(TSCLK_MIN) & " minimum"
               severity error;
           end if;
-
-          checked := checked + 1;
         end if;
 
         t_sclk_rise := now;
@@ -373,23 +389,22 @@ begin
 
       if (cs_n = '1') then
         t_cs_rise := now;
-      elsif (cs_n = '0' and t_cs_rise /= 0 ns) then
+      elsif ((cs_n = '0') and (t_cs_rise /= 0 ns)) then
         measured := now - t_cs_rise;
 
         if (measured < TCSOFF_MIN) then
-          errors <= errors + 1;
+          errs := errs + 1;
           report "FAIL tCSOFF " & time'image(measured)
                  & " below the " & time'image(TCSOFF_MIN) & " minimum"
             severity error;
         end if;
-
-        t_cs_fall := now;
       end if;
 
-      exit when sim_done;
+      time_errors <= errs;
 
     end loop;
 
+    time_errors <= errs;
     wait;
 
   end process timing;
