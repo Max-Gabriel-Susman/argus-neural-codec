@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main]
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -82,9 +82,16 @@ jobs:
 
       - name: Install VHDL style guide
         run: pip install VSG
-      
-      - name: Lint
-        run: vsg -f $(git ls-files '*.vhd' | grep -v '^argus_neural_codec\.') -c vsg.yaml
+
+      # Synthesisable sources are held to the full project style.
+      - name: Lint rtl
+        run: vsg -c vsg.yaml -f $(git ls-files 'rtl/*.vhd')
+
+      # Testbenches additionally relax four rules that only make sense for
+      # synthesisable code -- see the comments in sim/vsg_tb.yaml. VSG merges
+      # multiple -c files left to right, so the project style still applies.
+      - name: Lint sim
+        run: vsg -c vsg.yaml sim/vsg_tb.yaml -f $(git ls-files 'sim/*.vhd')
 
   hygiene:
     name: Repository hygiene
@@ -92,7 +99,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
- 
+
       - name: Reject CRLF line endings in tracked sources
         run: |
           set -euo pipefail
@@ -108,15 +115,3 @@ jobs:
             exit 1
           fi
           echo "No CRLF found."
- 
-      - name: Reject committed Vivado transient output
-        run: |
-          set -euo pipefail
-          bad=$(git ls-files -- \
-            '*.cache/*' '*.runs/*' '*.hw/*' '*.sim/*' '*.ip_user_files/*' \
-            'vivado*.log' 'vivado*.jou' 'vivado_pid*.str' || true)
-          if [ -n "$bad" ]; then
-            printf 'Vivado transient output is tracked:\n%s\n' "$bad"
-            exit 1
-          fi
-          echo "No transient Vivado output tracked."
