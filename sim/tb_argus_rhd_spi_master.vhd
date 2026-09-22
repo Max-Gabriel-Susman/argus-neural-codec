@@ -8,8 +8,7 @@
 --
 -- Nothing here reads the models' internals. The expected values are derived
 -- from the IDENT specification, so a bug in the model's sample_value is
--- caught rather than mirrored -- the same discipline the model's own
--- testbench uses.
+-- caught rather than mirrored.
 --
 -- WHAT IS ACTUALLY BEING TESTED
 --
@@ -23,15 +22,17 @@
 --      three-chip broadcast topology is most prone to.
 --
 --   3. SWEEP COHERENCE. Every channel within one sweep must carry the same
---      sample index, and the index must advance by one between sweeps. A
---      slot-counting error at the sweep boundary breaks this while leaving
---      individual words correct.
+--      sample index, and the index must advance by one between sweeps.
 --
 --   4. AUXILIARY SLOTS. Channels at or above CH_PER_CHIP take a different
 --      path through the model and must be flagged by slot_is_aux.
 --
---   5. TIMING. SCLK period, CS-high duration and slot period are measured
---      against the datasheet minimums rather than assumed from the generics.
+--   5. TIMING. SCLK period and CS-high duration are measured against the
+--      datasheet minimums rather than assumed from the generics.
+--
+-- To confirm check 5 actually fires, set SCLK_DIV to 4 below and re-run: a
+-- 32 ns SCLK against a 40 ns minimum must produce FAIL lines. A check that
+-- has never failed is not yet known to work.
 --
 -- The error counters are split per process. An unresolved signal type admits
 -- exactly one driver, so a single shared counter fails elaboration.
@@ -48,18 +49,18 @@ end entity tb_argus_rhd_spi_master;
 
 architecture sim of tb_argus_rhd_spi_master is
 
-  constant chip_count  : natural := 3;
-  constant ch_per_chip : natural := 32;
-  constant aux_slots   : natural := 3;
-  constant slot_clocks : natural := 119;
-  constant sclk_div    : natural := 5;
+  constant CHIP_COUNT  : natural := 3;
+  constant CH_PER_CHIP : natural := 32;
+  constant AUX_SLOTS   : natural := 3;
+  constant SLOT_CLOCKS : natural := 119;
+  constant SCLK_DIV    : natural := 5;
 
-  constant clk_period : time    := 8 ns;   -- 125 MHz
-  constant sweeps     : natural := 4;
+  constant CLK_PERIOD : time    := 8 ns;   -- 125 MHz
+  constant SWEEPS     : natural := 4;
 
   -- Datasheet minimums, checked against the measured waveform.
-  constant tsclk_min  : time := 40 ns;
-  constant tcsoff_min : time := 154 ns;
+  constant TSCLK_MIN  : time := 40 ns;
+  constant TCSOFF_MIN : time := 154 ns;
 
   signal clk    : std_logic := '0';
   signal rst_n  : std_logic := '0';
@@ -68,13 +69,13 @@ architecture sim of tb_argus_rhd_spi_master is
   signal sclk : std_logic;
   signal cs_n : std_logic;
   signal mosi : std_logic;
-  signal miso : std_logic_vector(chip_count - 1 downto 0);
+  signal miso : std_logic_vector(CHIP_COUNT - 1 downto 0);
 
-  signal miso_oe : std_logic_vector(chip_count - 1 downto 0);
+  signal miso_oe : std_logic_vector(CHIP_COUNT - 1 downto 0);
 
   signal slot_valid   : std_logic;
   signal slot_channel : unsigned(5 downto 0);
-  signal slot_data    : std_logic_vector(chip_count * 16 - 1 downto 0);
+  signal slot_data    : std_logic_vector(CHIP_COUNT * 16 - 1 downto 0);
   signal slot_is_aux  : std_logic;
   signal slot_last    : std_logic;
   signal ready        : std_logic;
@@ -85,11 +86,14 @@ architecture sim of tb_argus_rhd_spi_master is
   signal check_errors : natural := 0;
   signal time_errors  : natural := 0;
 
-  function hex4 (
-    v : std_logic_vector(15 downto 0)
-  ) return string is
+  -- Proves the timing process saw the bus at all, rather than silently
+  -- never firing and reporting zero errors.
+  signal sclk_edges : natural := 0;
+  signal cs_gaps    : natural := 0;
 
-    constant digits : string(1 to 16) := "0123456789ABCDEF";
+  function hex4 (v : std_logic_vector(15 downto 0)) return string is
+
+    constant DIGITS : string(1 to 16) := "0123456789ABCDEF";
     variable s      : string(1 to 4);
     variable nib    : integer;
 
@@ -108,7 +112,6 @@ architecture sim of tb_argus_rhd_spi_master is
 
   -- IDENT layout, from the specification rather than from the model:
   --   bits 15:14 chip, 13:8 channel, 7:0 sample index.
-
   function ident_word (
     chip : natural;
     ch   : unsigned(5 downto 0);
@@ -123,10 +126,7 @@ architecture sim of tb_argus_rhd_spi_master is
   end function ident_word;
 
   -- Auxiliary marker, for channels at or above the amplifier count.
-
-  function aux_word (
-    ch : unsigned(5 downto 0)
-  ) return std_logic_vector is
+  function aux_word (ch : unsigned(5 downto 0)) return std_logic_vector is
   begin
 
     return x"A0" & "00" & std_logic_vector(ch);
@@ -135,20 +135,19 @@ architecture sim of tb_argus_rhd_spi_master is
 
 begin
 
-  clk <= not clk after clk_period / 2 when not sim_done else
-         '0';
+  clk <= not clk after CLK_PERIOD / 2 when not sim_done else '0';
 
-  --------------------------------------------------------------------------
+  ------------------------------------------------------------------------
   -- Device under test
-  --------------------------------------------------------------------------
+  ------------------------------------------------------------------------
 
   dut : entity work.argus_rhd_spi_master
     generic map (
-      chip_count  => CHIP_COUNT,
-      ch_per_chip => CH_PER_CHIP,
-      aux_slots   => AUX_SLOTS,
-      slot_clocks => SLOT_CLOCKS,
-      sclk_div    => SCLK_DIV
+      CHIP_COUNT  => CHIP_COUNT,
+      CH_PER_CHIP => CH_PER_CHIP,
+      AUX_SLOTS   => AUX_SLOTS,
+      SLOT_CLOCKS => SLOT_CLOCKS,
+      SCLK_DIV    => SCLK_DIV
     )
     port map (
       clk          => clk,
@@ -166,18 +165,18 @@ begin
       ready        => ready
     );
 
-  --------------------------------------------------------------------------
+  ------------------------------------------------------------------------
   -- Three chips on the broadcast bus, distinguished only by CHIP_ID
-  --------------------------------------------------------------------------
+  ------------------------------------------------------------------------
 
-  chips : for c in 0 to chip_count - 1 generate
+  chips : for c in 0 to CHIP_COUNT - 1 generate
 
     chip_inst : entity work.argus_rhd2132_model
       generic map (
-        ch_per_chip  => CH_PER_CHIP,
-        chip_id      => c,
-        chip_type_id => 1,
-        pattern      => 0
+        CH_PER_CHIP  => CH_PER_CHIP,
+        CHIP_ID      => c,
+        CHIP_TYPE_ID => 1,
+        PATTERN      => 0
       )
       port map (
         clk           => clk,
@@ -194,9 +193,9 @@ begin
 
   end generate chips;
 
-  --------------------------------------------------------------------------
+  ------------------------------------------------------------------------
   -- Stream checker
-  --------------------------------------------------------------------------
+  ------------------------------------------------------------------------
 
   checker : process is
 
@@ -211,23 +210,21 @@ begin
 
   begin
 
-    rst_n  <= '0';
-    wait for 20 * clk_period;
-    rst_n  <= '1';
-    wait for 20 * clk_period;
+    rst_n <= '0';
+    wait for 20 * CLK_PERIOD;
+    rst_n <= '1';
+    wait for 20 * CLK_PERIOD;
     enable <= '1';
 
     report "waiting for initialisation sequence";
     wait until ready = '1';
     report "ready asserted; sweeping";
 
-    while sweep < sweeps loop
+    while sweep < SWEEPS loop
 
       wait until rising_edge(clk) and slot_valid = '1';
       slots := slots + 1;
 
-      -- Channel identity. The master must name the channel the data belongs
-      -- to; a two-slot rotation lands here.
       if (to_integer(slot_channel) /= expect_ch) then
         errs := errs + 1;
         report "FAIL sweep " & integer'image(sweep)
@@ -236,8 +233,8 @@ begin
           severity error;
       end if;
 
-      if (expect_ch >= ch_per_chip) then
-        -- Auxiliary slot: every lane returns the marker, flag must be set.
+      if (expect_ch >= CH_PER_CHIP) then
+
         if (slot_is_aux /= '1') then
           errs := errs + 1;
           report "FAIL channel " & integer'image(expect_ch)
@@ -245,7 +242,7 @@ begin
             severity error;
         end if;
 
-        for c in 0 to chip_count - 1 loop
+        for c in 0 to CHIP_COUNT - 1 loop
 
           word := slot_data(c * 16 + 15 downto c * 16);
 
@@ -261,6 +258,7 @@ begin
         end loop;
 
       else
+
         if (slot_is_aux /= '0') then
           errs := errs + 1;
           report "FAIL channel " & integer'image(expect_ch)
@@ -268,8 +266,6 @@ begin
             severity error;
         end if;
 
-        -- Latch the sweep's sample index from channel 0, then require every
-        -- other channel in the sweep to carry the same one.
         if (expect_ch = 0) then
           sweep_idx := unsigned(slot_data(7 downto 0));
 
@@ -285,9 +281,7 @@ begin
           have_prev := true;
         end if;
 
-        -- Chip lane identity. Each model stamps its own CHIP_ID, so crossed
-        -- MISO lines fail here and nowhere else.
-        for c in 0 to chip_count - 1 loop
+        for c in 0 to CHIP_COUNT - 1 loop
 
           word := slot_data(c * 16 + 15 downto c * 16);
 
@@ -303,9 +297,7 @@ begin
 
         end loop;
 
-        -- slot_last marks the final amplifier channel, which is what a frame
-        -- assembler keys its frame boundary off.
-        if (expect_ch = ch_per_chip - 1) then
+        if (expect_ch = CH_PER_CHIP - 1) then
           if (slot_last /= '1') then
             errs := errs + 1;
             report "FAIL sweep " & integer'image(sweep)
@@ -319,11 +311,12 @@ begin
                  & ": slot_last set early"
             severity error;
         end if;
+
       end if;
 
       check_errors <= errs;
 
-      if (expect_ch = ch_per_chip + aux_slots - 1) then
+      if (expect_ch = CH_PER_CHIP + AUX_SLOTS - 1) then
         expect_ch := 0;
         sweep     := sweep + 1;
       else
@@ -334,14 +327,22 @@ begin
 
     check_errors <= errs;
 
-    -- Let the timing process's last increment settle before reading totals.
+    -- Let the timing process's last update settle before reading totals.
     wait for 1 ns;
 
     report "checked " & integer'image(slots) & " slots over "
-           & integer'image(sweeps) & " sweeps";
+           & integer'image(SWEEPS) & " sweeps";
+    report "timing: " & integer'image(sclk_edges) & " SCLK edges, "
+           & integer'image(cs_gaps) & " CS gaps measured";
+
+    -- A timing process that never fired would report zero errors and look
+    -- like a pass.
+    if ((sclk_edges = 0) or (cs_gaps = 0)) then
+      report "FAIL: timing process never observed the bus" severity failure;
+    end if;
 
     if ((check_errors = 0) and (time_errors = 0)) then
-      report "PASS: pipeline, chip lanes, sweep coherence and aux slots verified";
+      report "PASS: pipeline, chip lanes, sweep coherence, aux slots and timing verified";
     else
       report "FAIL: " & integer'image(check_errors) & " stream error(s), "
              & integer'image(time_errors) & " timing error(s)"
@@ -353,78 +354,99 @@ begin
 
   end process checker;
 
-  --------------------------------------------------------------------------
-  -- Bus timing, measured rather than assumed
-  --------------------------------------------------------------------------
+  ------------------------------------------------------------------------
+  -- Bus timing, sampled in the clock domain
+  --
+  -- Everything is sampled on clk rather than waited on with edge functions.
+  -- A single wait listing three edge conditions resolves its disambiguating
+  -- level test a delta after the edge, by which point the signals have
+  -- moved -- so no edge is ever recognised and the check silently never
+  -- fires. Counting clocks is deterministic and needs no disambiguation.
+  ------------------------------------------------------------------------
 
-  timing : process is
+  timing : process (clk) is
 
-    variable t_sclk_rise : time    := 0 ns;
-    variable t_cs_rise   : time    := 0 ns;
-    variable measured    : time;
-    variable errs        : natural := 0;
+    variable sclk_q     : std_logic := '0';
+    variable cs_q       : std_logic := '1';
+    variable since_sclk : natural   := 0;
+    variable since_cs   : natural   := 0;
+    variable have_sclk  : boolean   := false;
+    variable have_cs    : boolean   := false;
+    variable errs       : natural   := 0;
+    variable n_sclk     : natural   := 0;
+    variable n_cs       : natural   := 0;
+    variable measured   : time;
 
   begin
 
-    wait until ready = '1';
+    if rising_edge(clk) then
+      if (ready = '1') then
+        since_sclk := since_sclk + 1;
+        since_cs   := since_cs + 1;
 
-    loop
+        -- Rising SCLK edge while a chip is selected.
+        if ((sclk = '1') and (sclk_q = '0') and (cs_n = '0')) then
+          if (have_sclk) then
+            measured := since_sclk * CLK_PERIOD;
+            n_sclk   := n_sclk + 1;
 
-      wait until rising_edge(sclk) or rising_edge(cs_n) or falling_edge(cs_n);
+            if (measured < TSCLK_MIN) then
+              errs := errs + 1;
+              report "FAIL tSCLK " & time'image(measured)
+                     & " below the " & time'image(TSCLK_MIN) & " minimum"
+                severity error;
+            end if;
+          end if;
 
-      exit when sim_done;
+          have_sclk  := true;
+          since_sclk := 0;
+        end if;
 
-      if ((sclk = '1') and (cs_n = '0')) then
-        if (t_sclk_rise /= 0 ns) then
-          measured := now - t_sclk_rise;
+        -- CS rising: the inter-command gap opens. The SCLK interval across
+        -- that gap spans two commands and is not a tSCLK.
+        if ((cs_n = '1') and (cs_q = '0')) then
+          have_cs   := true;
+          since_cs  := 0;
+          have_sclk := false;
+        end if;
 
-          -- Only consecutive edges within one command are meaningful; the
-          -- gap across a CS pulse is much larger and is skipped.
-          if ((measured < tsclk_min) and (measured < 200 ns)) then
-            errs := errs + 1;
-            report "FAIL tSCLK " & time'image(measured)
-                   & " below the " & time'image(tsclk_min) & " minimum"
-              severity error;
+        -- CS falling: the gap closes.
+        if ((cs_n = '0') and (cs_q = '1')) then
+          if (have_cs) then
+            measured := since_cs * CLK_PERIOD;
+            n_cs     := n_cs + 1;
+
+            if (measured < TCSOFF_MIN) then
+              errs := errs + 1;
+              report "FAIL tCSOFF " & time'image(measured)
+                     & " below the " & time'image(TCSOFF_MIN) & " minimum"
+                severity error;
+            end if;
           end if;
         end if;
 
-        t_sclk_rise := now;
+        time_errors <= errs;
+        sclk_edges  <= n_sclk;
+        cs_gaps     <= n_cs;
       end if;
 
-      if (cs_n = '1') then
-        t_cs_rise := now;
-      elsif ((cs_n = '0') and (t_cs_rise /= 0 ns)) then
-        measured := now - t_cs_rise;
-
-        if (measured < tcsoff_min) then
-          errs := errs + 1;
-          report "FAIL tCSOFF " & time'image(measured)
-                 & " below the " & time'image(tcsoff_min) & " minimum"
-            severity error;
-        end if;
-      end if;
-
-      time_errors <= errs;
-
-    end loop;
-
-    time_errors <= errs;
-    wait;
+      sclk_q := sclk;
+      cs_q   := cs_n;
+    end if;
 
   end process timing;
 
-  --------------------------------------------------------------------------
+  ------------------------------------------------------------------------
   -- Watchdog. A stalled sequencer would otherwise hang rather than fail.
-  --------------------------------------------------------------------------
+  ------------------------------------------------------------------------
 
   watchdog : process is
   begin
 
     wait for 20 ms;
 
-    if (not sim_done) then
-      report "FAIL: timeout"
-        severity failure;
+    if not sim_done then
+      report "FAIL: timeout" severity failure;
     end if;
 
     wait;
