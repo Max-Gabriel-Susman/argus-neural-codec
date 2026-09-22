@@ -2,6 +2,9 @@
 -- TODO: needs impl
 
 entity argus_frame_assembler is
+    generic(
+-- TODO: needs impl
+    );
 -- TODO: needs impl
 end entity argus_frame_assembler;
 
