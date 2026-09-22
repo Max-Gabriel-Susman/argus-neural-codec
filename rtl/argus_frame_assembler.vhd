@@ -3,6 +3,7 @@
 
 entity argus_frame_assembler is
     generic(
+        CHIP_COUNT : natural := 3;
 -- TODO: needs impl
     );
 -- TODO: needs impl
