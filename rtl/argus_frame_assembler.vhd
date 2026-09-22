@@ -5,4 +5,6 @@ entity argus_frame_assembler is
 -- TODO: needs impl
 end entity argus_frame_assembler;
 
+architecture rtl of argus_frame_assembler is
 -- TODO: needs impl
+end architecture rtl;
