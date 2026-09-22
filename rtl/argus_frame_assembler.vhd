@@ -2,10 +2,10 @@
 -- TODO: needs impl
 
 entity argus_frame_assembler is
-    generic (
-        CHIP_COUNT  : natural := 3;
-        CH_PER_CHIP : natural := 32
-    );
+  generic (
+    CHIP_COUNT  : natural := 3;
+    CH_PER_CHIP : natural := 32
+  );
 -- TODO: needs impl
 end entity argus_frame_assembler;
 
