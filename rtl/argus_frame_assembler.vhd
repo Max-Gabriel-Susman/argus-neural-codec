@@ -29,8 +29,8 @@ library ieee;
 
 entity argus_frame_assembler is
   generic (
-    CHIP_COUNT  : natural := 3;
-    CH_PER_CHIP : natural := 32
+    chip_count  : natural := 3;
+    ch_per_chip : natural := 32
   );
   port (
     clk   : in    std_logic;
@@ -41,7 +41,7 @@ entity argus_frame_assembler is
     -- upstream and is not this module's concern.
     slot_valid   : in    std_logic;
     slot_channel : in    unsigned(5 downto 0);
-    slot_data    : in    std_logic_vector(CHIP_COUNT * 16 - 1 downto 0);
+    slot_data    : in    std_logic_vector(chip_count * 16 - 1 downto 0);
     slot_is_aux  : in    std_logic;
     slot_last    : in    std_logic;
 
@@ -64,9 +64,9 @@ end entity argus_frame_assembler;
 
 architecture rtl of argus_frame_assembler is
 
-  constant TOTAL_CHANNELS : natural := CHIP_COUNT * CH_PER_CHIP;
+  constant total_channels : natural := chip_count * ch_per_chip;
 
-  type frame_buf_t is array (0 to 2 * TOTAL_CHANNELS - 1) of std_logic_vector(15 downto 0);
+  type frame_buf_t is array (0 to 2 * total_channels - 1) of std_logic_vector(15 downto 0);
 
   ------------------------------------------------------------------------
   -- Electrode map.
@@ -93,7 +93,7 @@ architecture rtl of argus_frame_assembler is
   signal wr_bank  : std_logic;
   signal wr_busy  : std_logic;
   signal wr_lane  : natural range 0 to 15;
-  signal lat_data : std_logic_vector(CHIP_COUNT * 16 - 1 downto 0);
+  signal lat_data : std_logic_vector(chip_count * 16 - 1 downto 0);
   signal lat_ch   : unsigned(5 downto 0);
   signal lat_last : std_logic;
 
@@ -104,7 +104,7 @@ architecture rtl of argus_frame_assembler is
 
 begin
 
-  assert TOTAL_CHANNELS <= 256
+  assert total_channels <= 256
     report "TOTAL_CHANNELS exceeds the 8-bit read address"
     severity failure;
 
@@ -151,19 +151,18 @@ begin
             wr_busy  <= '1';
           end if;
         elsif (wr_busy = '1') then
-
           ----------------------------------------------------------------
           -- One lane per clock into the bank being written.
           ----------------------------------------------------------------
           widx := electrode_index(wr_lane, lat_ch);
 
           if (wr_bank = '1') then
-            widx := widx + TOTAL_CHANNELS;
+            widx := widx + total_channels;
           end if;
 
           buf(widx) <= lat_data(wr_lane * 16 + 15 downto wr_lane * 16);
 
-          if (wr_lane = CHIP_COUNT - 1) then
+          if (wr_lane = chip_count - 1) then
             wr_busy <= '0';
 
             -- The frame closes on the last amplifier channel. Flipping the
@@ -176,7 +175,6 @@ begin
           else
             wr_lane <= wr_lane + 1;
           end if;
-
         end if;
       end if;
     end if;
@@ -201,7 +199,7 @@ begin
         ridx := to_integer(rd_addr);
 
         if (wr_bank = '0') then
-          ridx := ridx + TOTAL_CHANNELS;
+          ridx := ridx + total_channels;
         end if;
 
         rd_data_r <= buf(ridx);

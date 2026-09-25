@@ -39,14 +39,14 @@ library ieee;
 
 entity argus_acq_axi is
   generic (
-    C_S_AXI_ADDR_WIDTH : natural := 12;
-    TOTAL_CHANNELS     : natural := 96
+    c_s_axi_addr_width : natural := 12;
+    total_channels     : natural := 96
   );
   port (
     s_axi_aclk    : in    std_logic;
     s_axi_aresetn : in    std_logic;
 
-    s_axi_awaddr  : in    std_logic_vector(C_S_AXI_ADDR_WIDTH - 1 downto 0);
+    s_axi_awaddr  : in    std_logic_vector(c_s_axi_addr_width - 1 downto 0);
     s_axi_awprot  : in    std_logic_vector(2 downto 0);
     s_axi_awvalid : in    std_logic;
     s_axi_awready : out   std_logic;
@@ -57,7 +57,7 @@ entity argus_acq_axi is
     s_axi_bresp   : out   std_logic_vector(1 downto 0);
     s_axi_bvalid  : out   std_logic;
     s_axi_bready  : in    std_logic;
-    s_axi_araddr  : in    std_logic_vector(C_S_AXI_ADDR_WIDTH - 1 downto 0);
+    s_axi_araddr  : in    std_logic_vector(c_s_axi_addr_width - 1 downto 0);
     s_axi_arprot  : in    std_logic_vector(2 downto 0);
     s_axi_arvalid : in    std_logic;
     s_axi_arready : out   std_logic;
@@ -82,20 +82,21 @@ end entity argus_acq_axi;
 
 architecture rtl of argus_acq_axi is
 
-  constant ID_VALUE : std_logic_vector(31 downto 0) := x"41435131";
-  constant UNMAPPED : std_logic_vector(31 downto 0) := x"DEADBEEF";
+  constant id_value : std_logic_vector(31 downto 0) := x"41435131";
+  constant unmapped : std_logic_vector(31 downto 0) := x"DEADBEEF";
 
   -- Word addresses.
-  constant W_CTRL        : natural := 0;
-  constant W_STATUS      : natural := 1;
-  constant W_FRAME_INDEX : natural := 2;
-  constant W_ID          : natural := 3;
-  constant W_FRAME_BASE  : natural := 64;    -- 0x100
+  constant w_ctrl        : natural := 0;
+  constant w_status      : natural := 1;
+  constant w_frame_index : natural := 2;
+  constant w_id          : natural := 3;
+  constant w_frame_base  : natural := 64;    -- 0x100
 
-  constant RESP_OKAY : std_logic_vector(1 downto 0) := "00";
+  constant resp_okay : std_logic_vector(1 downto 0) := "00";
 
-  type wr_state_t is (WR_IDLE, WR_RESP);
-  type rd_state_t is (RD_IDLE, RD_RAM, RD_WAIT, RD_RESP);
+  type wr_state_t is (wr_idle, wr_resp);
+
+  type rd_state_t is (rd_idle, rd_ram, rd_wait, rd_resp);
 
   signal wr_state : wr_state_t;
   signal rd_state : rd_state_t;
@@ -142,7 +143,7 @@ begin
 
     if rising_edge(s_axi_aclk) then
       if (s_axi_aresetn = '0') then
-        wr_state    <= WR_IDLE;
+        wr_state    <= wr_idle;
         awready_r   <= '0';
         wready_r    <= '0';
         bvalid_r    <= '0';
@@ -155,7 +156,7 @@ begin
 
         case wr_state is
 
-          when WR_IDLE =>
+          when wr_idle =>
 
             -- Accept both channels together. ready pulses for one cycle the
             -- clock after both valids are seen; the handshake completes in
@@ -174,20 +175,20 @@ begin
 
               -- Only CTRL is writable. Writes elsewhere are acknowledged and
               -- discarded, matching read-only register semantics.
-              if ((wr_word = W_CTRL) and (wr_strb(0) = '1')) then
+              if ((wr_word = w_ctrl) and (wr_strb(0) = '1')) then
                 ctrl_enable <= wr_data(0);
                 ctrl_reset  <= wr_data(1);
               end if;
 
               bvalid_r <= '1';
-              wr_state <= WR_RESP;
+              wr_state <= wr_resp;
             end if;
 
-          when WR_RESP =>
+          when wr_resp =>
 
             if (s_axi_bready = '1') then
               bvalid_r <= '0';
-              wr_state <= WR_IDLE;
+              wr_state <= wr_idle;
             end if;
 
         end case;
@@ -209,7 +210,7 @@ begin
 
     if rising_edge(s_axi_aclk) then
       if (s_axi_aresetn = '0') then
-        rd_state  <= RD_IDLE;
+        rd_state  <= rd_idle;
         arready_r <= '0';
         rvalid_r  <= '0';
         rdata_r   <= (others => '0');
@@ -221,7 +222,7 @@ begin
 
         case rd_state is
 
-          when RD_IDLE =>
+          when rd_idle =>
 
             if ((s_axi_arvalid = '1') and (arready_r = '0')) then
               arready_r <= '1';
@@ -231,60 +232,60 @@ begin
             if (arready_r = '1') then
               arready_r <= '0';
 
-              if ((rd_word >= W_FRAME_BASE) and (rd_word < W_FRAME_BASE + TOTAL_CHANNELS)) then
+              if ((rd_word >= w_frame_base) and (rd_word < w_frame_base + total_channels)) then
                 -- Frame word: issue the RAM read, collect it two cycles on.
-                n         := rd_word - W_FRAME_BASE;
+                n         := rd_word - w_frame_base;
                 rd_addr_r <= to_unsigned(n, 8);
                 rd_en_r   <= '1';
-                rd_state  <= RD_RAM;
+                rd_state  <= rd_ram;
               else
 
                 case rd_word is
 
-                  when W_CTRL =>
+                  when w_ctrl =>
 
                     rdata_r <= (0 => ctrl_enable, 1 => ctrl_reset, others => '0');
 
-                  when W_STATUS =>
+                  when w_status =>
 
                     rdata_r <= (0 => ready, 1 => overrun, others => '0');
 
-                  when W_FRAME_INDEX =>
+                  when w_frame_index =>
 
                     rdata_r <= std_logic_vector(frame_index);
 
-                  when W_ID =>
+                  when w_id =>
 
-                    rdata_r <= ID_VALUE;
+                    rdata_r <= id_value;
 
                   when others =>
 
-                    rdata_r <= UNMAPPED;
+                    rdata_r <= unmapped;
 
                 end case;
 
                 rvalid_r <= '1';
-                rd_state <= RD_RESP;
+                rd_state <= rd_resp;
               end if;
             end if;
 
-          when RD_RAM =>
+          when rd_ram =>
 
             -- rd_en was high last cycle; the assembler registers its output
             -- on this edge. One more cycle before it is valid.
-            rd_state <= RD_WAIT;
+            rd_state <= rd_wait;
 
-          when RD_WAIT =>
+          when rd_wait =>
 
             rdata_r  <= x"0000" & rd_data;
             rvalid_r <= '1';
-            rd_state <= RD_RESP;
+            rd_state <= rd_resp;
 
-          when RD_RESP =>
+          when rd_resp =>
 
             if (s_axi_rready = '1') then
               rvalid_r <= '0';
-              rd_state <= RD_IDLE;
+              rd_state <= rd_idle;
             end if;
 
         end case;
@@ -296,11 +297,11 @@ begin
 
   s_axi_awready <= awready_r;
   s_axi_wready  <= wready_r;
-  s_axi_bresp   <= RESP_OKAY;
+  s_axi_bresp   <= resp_okay;
   s_axi_bvalid  <= bvalid_r;
   s_axi_arready <= arready_r;
   s_axi_rdata   <= rdata_r;
-  s_axi_rresp   <= RESP_OKAY;
+  s_axi_rresp   <= resp_okay;
   s_axi_rvalid  <= rvalid_r;
 
   enable     <= ctrl_enable;

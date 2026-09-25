@@ -5,7 +5,7 @@
 -- three simulated RHD2132 chips, frame assembler, register block. This is
 -- the module the block design instantiates on M_AXI_GP0.
 --
--- The chips are internal, there are no external
+-- The chips are internal (Option B, simulated Intan). There are no external
 -- SPI pins: the bus never leaves the fabric, so there is nothing to
 -- constrain. Bring-up visibility comes from an ILA on the internal signals
 -- rather than a scope. When real silicon arrives, a generic here selects
@@ -97,7 +97,7 @@ begin
   -- synchronous reset for the chain.
   chain_rst_n <= s_axi_aresetn and not soft_reset;
 
-  regs : entity work.argus_acq_axi
+  regs : entity work.argus_acq_axi(rtl)
     generic map (
       C_S_AXI_ADDR_WIDTH => C_S_AXI_ADDR_WIDTH,
       TOTAL_CHANNELS     => TOTAL_CHANNELS
@@ -134,7 +134,7 @@ begin
       rd_data       => rd_data
     );
 
-  master : entity work.argus_rhd_spi_master
+  master : entity work.argus_rhd_spi_master(rtl)
     generic map (
       CHIP_COUNT  => CHIP_COUNT,
       CH_PER_CHIP => CH_PER_CHIP,
@@ -160,7 +160,7 @@ begin
 
   chips : for c in 0 to CHIP_COUNT - 1 generate
 
-    chip_inst : entity work.argus_rhd2132_model
+    chip_inst : entity work.argus_rhd2132_model(rtl)
       generic map (
         CH_PER_CHIP  => CH_PER_CHIP,
         CHIP_ID      => c,
@@ -182,7 +182,7 @@ begin
 
   end generate chips;
 
-  assembler : entity work.argus_frame_assembler
+  assembler : entity work.argus_frame_assembler(rtl)
     generic map (
       CHIP_COUNT  => CHIP_COUNT,
       CH_PER_CHIP => CH_PER_CHIP

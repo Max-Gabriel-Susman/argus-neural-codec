@@ -37,16 +37,16 @@ end entity tb_argus_frame_assembler;
 
 architecture sim of tb_argus_frame_assembler is
 
-  constant CHIP_COUNT  : natural := 3;
-  constant CH_PER_CHIP : natural := 32;
-  constant AUX_SLOTS   : natural := 3;
-  constant SLOT_CLOCKS : natural := 119;
-  constant SCLK_DIV    : natural := 5;
+  constant chip_count  : natural := 3;
+  constant ch_per_chip : natural := 32;
+  constant aux_slots   : natural := 3;
+  constant slot_clocks : natural := 119;
+  constant sclk_div    : natural := 5;
 
-  constant TOTAL_CHANNELS : natural := CHIP_COUNT * CH_PER_CHIP;
+  constant total_channels : natural := chip_count * ch_per_chip;
 
-  constant CLK_PERIOD : time    := 8 ns;
-  constant FRAMES     : natural := 4;
+  constant clk_period : time    := 8 ns;
+  constant frames     : natural := 4;
 
   signal clk    : std_logic := '0';
   signal rst_n  : std_logic := '0';
@@ -55,20 +55,20 @@ architecture sim of tb_argus_frame_assembler is
   signal sclk : std_logic;
   signal cs_n : std_logic;
   signal mosi : std_logic;
-  signal miso : std_logic_vector(CHIP_COUNT - 1 downto 0);
+  signal miso : std_logic_vector(chip_count - 1 downto 0);
 
-  signal miso_oe : std_logic_vector(CHIP_COUNT - 1 downto 0);
+  signal miso_oe : std_logic_vector(chip_count - 1 downto 0);
 
   signal slot_valid   : std_logic;
   signal slot_channel : unsigned(5 downto 0);
-  signal slot_data    : std_logic_vector(CHIP_COUNT * 16 - 1 downto 0);
+  signal slot_data    : std_logic_vector(chip_count * 16 - 1 downto 0);
   signal slot_is_aux  : std_logic;
   signal slot_last    : std_logic;
   signal ready        : std_logic;
 
   signal frame_valid : std_logic;
   signal frame_index : unsigned(31 downto 0);
-  signal rd_en       : std_logic := '0';
+  signal rd_en       : std_logic            := '0';
   signal rd_addr     : unsigned(7 downto 0) := (others => '0');
   signal rd_data     : std_logic_vector(15 downto 0);
   signal overrun     : std_logic;
@@ -76,9 +76,11 @@ architecture sim of tb_argus_frame_assembler is
   signal sim_done : boolean := false;
   signal errors   : natural := 0;
 
-  function hex4 (v : std_logic_vector(15 downto 0)) return string is
+  function hex4 (
+    v : std_logic_vector(15 downto 0)
+  ) return string is
 
-    constant DIGITS : string(1 to 16) := "0123456789ABCDEF";
+    constant digits : string(1 to 16) := "0123456789ABCDEF";
     variable s      : string(1 to 4);
     variable nib    : integer;
 
@@ -97,14 +99,19 @@ architecture sim of tb_argus_frame_assembler is
 
   -- Mirrors electrode_index() in the assembler. Kept separate on purpose: if
   -- the two disagree the test fails, which is the point.
-  function expect_chip (idx : natural) return natural is
+
+  function expect_chip (
+    idx : natural
+  ) return natural is
   begin
 
     return idx / CH_PER_CHIP;
 
   end function expect_chip;
 
-  function expect_channel (idx : natural) return unsigned is
+  function expect_channel (
+    idx : natural
+  ) return unsigned is
   begin
 
     return to_unsigned(idx mod CH_PER_CHIP, 6);
@@ -112,6 +119,7 @@ architecture sim of tb_argus_frame_assembler is
   end function expect_channel;
 
   -- IDENT layout, from the specification rather than from the model.
+
   function ident_word (
     chip : natural;
     ch   : unsigned(5 downto 0);
@@ -127,15 +135,16 @@ architecture sim of tb_argus_frame_assembler is
 
 begin
 
-  clk <= not clk after CLK_PERIOD / 2 when not sim_done else '0';
+  clk <= not clk after clk_period / 2 when not sim_done else
+         '0';
 
   master : entity work.argus_rhd_spi_master
     generic map (
-      CHIP_COUNT  => CHIP_COUNT,
-      CH_PER_CHIP => CH_PER_CHIP,
-      AUX_SLOTS   => AUX_SLOTS,
-      SLOT_CLOCKS => SLOT_CLOCKS,
-      SCLK_DIV    => SCLK_DIV
+      chip_count  => CHIP_COUNT,
+      ch_per_chip => CH_PER_CHIP,
+      aux_slots   => AUX_SLOTS,
+      slot_clocks => SLOT_CLOCKS,
+      sclk_div    => SCLK_DIV
     )
     port map (
       clk          => clk,
@@ -153,14 +162,14 @@ begin
       ready        => ready
     );
 
-  chips : for c in 0 to CHIP_COUNT - 1 generate
+  chips : for c in 0 to chip_count - 1 generate
 
     chip_inst : entity work.argus_rhd2132_model
       generic map (
-        CH_PER_CHIP  => CH_PER_CHIP,
-        CHIP_ID      => c,
-        CHIP_TYPE_ID => 1,
-        PATTERN      => 0
+        ch_per_chip  => CH_PER_CHIP,
+        chip_id      => c,
+        chip_type_id => 1,
+        pattern      => 0
       )
       port map (
         clk           => clk,
@@ -179,8 +188,8 @@ begin
 
   assembler : entity work.argus_frame_assembler
     generic map (
-      CHIP_COUNT  => CHIP_COUNT,
-      CH_PER_CHIP => CH_PER_CHIP
+      chip_count  => CHIP_COUNT,
+      ch_per_chip => CH_PER_CHIP
     )
     port map (
       clk          => clk,
@@ -214,6 +223,7 @@ begin
     variable want      : std_logic_vector(15 downto 0);
 
     -- Registered read: assert the address, wait a clock, then sample.
+
     procedure read_word (
       idx : in    natural;
       w   : out   std_logic_vector(15 downto 0)
@@ -223,24 +233,24 @@ begin
       rd_addr <= to_unsigned(idx, 8);
       rd_en   <= '1';
       wait until rising_edge(clk);
-      rd_en <= '0';
+      rd_en   <= '0';
       wait until rising_edge(clk);
-      w := rd_data;
+      w       := rd_data;
 
     end procedure read_word;
 
   begin
 
-    rst_n <= '0';
-    wait for 20 * CLK_PERIOD;
-    rst_n <= '1';
-    wait for 20 * CLK_PERIOD;
+    rst_n  <= '0';
+    wait for 20 * clk_period;
+    rst_n  <= '1';
+    wait for 20 * clk_period;
     enable <= '1';
 
     wait until ready = '1';
     report "master ready; collecting frames";
 
-    while frame < FRAMES loop
+    while frame < frames loop
 
       wait until rising_edge(clk) and frame_valid = '1';
 
@@ -258,7 +268,7 @@ begin
       read_word(0, first);
       frame_idx := unsigned(first(7 downto 0));
 
-      for n in 0 to TOTAL_CHANNELS - 1 loop
+      for n in 0 to total_channels - 1 loop
 
         read_word(n, first);
         want := ident_word(expect_chip(n), expect_channel(n), frame_idx);
@@ -279,7 +289,7 @@ begin
       -- bleeding into these reads.
       wait for 25 us;
 
-      for n in 0 to TOTAL_CHANNELS - 1 loop
+      for n in 0 to total_channels - 1 loop
 
         read_word(n, second);
         want := ident_word(expect_chip(n), expect_channel(n), frame_idx);
@@ -302,14 +312,15 @@ begin
 
     if (overrun /= '0') then
       errs := errs + 1;
-      report "FAIL assembler reported overrun" severity error;
+      report "FAIL assembler reported overrun"
+        severity error;
     end if;
 
     errors <= errs;
     wait for 1 ns;
 
-    report "checked " & integer'image(FRAMES) & " frames of "
-           & integer'image(TOTAL_CHANNELS) & " channels";
+    report "checked " & integer'image(frames) & " frames of "
+           & integer'image(total_channels) & " channels";
 
     if (errors = 0) then
       report "PASS: electrode mapping, double buffering and frame indexing verified";
@@ -328,8 +339,9 @@ begin
 
     wait for 20 ms;
 
-    if not sim_done then
-      report "FAIL: timeout" severity failure;
+    if (not sim_done) then
+      report "FAIL: timeout"
+        severity failure;
     end if;
 
     wait;

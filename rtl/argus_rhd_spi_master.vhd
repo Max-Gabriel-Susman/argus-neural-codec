@@ -49,18 +49,18 @@ library ieee;
 entity argus_rhd_spi_master is
   generic (
     -- Chips on the broadcast bus, one MISO lane each.
-    CHIP_COUNT : natural := 3;
+    chip_count : natural := 3;
     -- Amplifier channels per chip. Channels at or above this are auxiliary.
-    CH_PER_CHIP : natural := 32;
+    ch_per_chip : natural := 32;
     -- Auxiliary command slots appended to each sweep. Intan's recommended
     -- sequence is 32 conversions plus 3 auxiliary commands.
-    AUX_SLOTS : natural := 3;
+    aux_slots : natural := 3;
     -- Clocks per command slot. Sets the sample rate together with the sweep
     -- length: rate = CLK / (SLOT_CLOCKS * (CH_PER_CHIP + AUX_SLOTS)).
-    SLOT_CLOCKS : natural := 119;
+    slot_clocks : natural := 119;
     -- Clocks per SCLK period. Must be at least 4 for the slave-side edge
     -- detection to resolve both edges, and at most 16 for the phase counter.
-    SCLK_DIV : natural := 5
+    sclk_div : natural := 5
   );
   port (
     clk   : in    std_logic;
@@ -74,13 +74,13 @@ entity argus_rhd_spi_master is
     sclk : out   std_logic;
     cs_n : out   std_logic;
     mosi : out   std_logic;
-    miso : in    std_logic_vector(CHIP_COUNT - 1 downto 0);
+    miso : in    std_logic_vector(chip_count - 1 downto 0);
 
     -- Slot stream. One pulse per command slot that carried a conversion
     -- result. Lane c of slot_data occupies bits (c*16+15 downto c*16).
     slot_valid   : out   std_logic;
     slot_channel : out   unsigned(5 downto 0);
-    slot_data    : out   std_logic_vector(CHIP_COUNT * 16 - 1 downto 0);
+    slot_data    : out   std_logic_vector(chip_count * 16 - 1 downto 0);
     slot_is_aux  : out   std_logic;
     slot_last    : out   std_logic;
 
@@ -92,25 +92,25 @@ end entity argus_rhd_spi_master;
 
 architecture rtl of argus_rhd_spi_master is
 
-  constant OP_CONVERT : std_logic_vector(1 downto 0) := "00";
-  constant OP_WRITE   : std_logic_vector(1 downto 0) := "10";
-  constant OP_READ    : std_logic_vector(1 downto 0) := "11";
+  constant op_convert : std_logic_vector(1 downto 0) := "00";
+  constant op_write   : std_logic_vector(1 downto 0) := "10";
+  constant op_read    : std_logic_vector(1 downto 0) := "11";
 
-  constant CMD_CALIBRATE : std_logic_vector(15 downto 0) := x"5500";
+  constant cmd_calibrate : std_logic_vector(15 downto 0) := x"5500";
 
-  constant SWEEP_SLOTS : natural := CH_PER_CHIP + AUX_SLOTS;
+  constant sweep_slots : natural := ch_per_chip + aux_slots;
 
   -- Slot phase boundaries, derived so the timing comment above stays true
   -- when the generics change.
-  constant CS_SETUP_CLOCKS : natural := 3;
-  constant CS_HOLD_CLOCKS  : natural := 3;
-  constant SCLK_START      : natural := CS_SETUP_CLOCKS;
-  constant SCLK_STOP       : natural := SCLK_START + 16 * SCLK_DIV - 1;
-  constant CS_STOP         : natural := SCLK_STOP + CS_HOLD_CLOCKS;
+  constant cs_setup_clocks : natural := 3;
+  constant cs_hold_clocks  : natural := 3;
+  constant sclk_start      : natural := cs_setup_clocks;
+  constant sclk_stop       : natural := sclk_start + 16 * sclk_div - 1;
+  constant cs_stop         : natural := sclk_stop + cs_hold_clocks;
 
   -- SCLK is low for the first LOW_PHASE clocks of each bit period, high for
   -- the rest. MOSI updates at offset 0, MISO is sampled at LOW_PHASE.
-  constant SCLK_LOW_PHASE : natural := SCLK_DIV - 2;
+  constant sclk_low_phase : natural := sclk_div - 2;
 
   type cmd_rom_t is array (natural range <>) of std_logic_vector(15 downto 0);
 
@@ -146,36 +146,61 @@ architecture rtl of argus_rhd_spi_master is
   -- Intan's documented initialisation sequence. The nine reads after
   -- CALIBRATE are consumed but not executed by the chip; they exist to give
   -- calibration time to finish, and their results are discarded here.
-  constant INIT_ROM : cmd_rom_t :=
+  constant init_rom : cmd_rom_t :=
   (
-    read_cmd(63), read_cmd(63),
-    write_cmd(0, 16#DE#),
-    write_cmd(1, 16#42#),
-    write_cmd(2, 16#04#),
-    write_cmd(3, 16#00#),
-    write_cmd(4, 16#80#),
-    write_cmd(5, 16#40#),
-    write_cmd(6, 16#80#),
-    write_cmd(7, 16#00#),
-    write_cmd(8, 16#16#),
-    write_cmd(9, 16#80#),
-    write_cmd(10, 16#17#),
-    write_cmd(11, 16#80#),
-    write_cmd(12, 16#2C#),
-    write_cmd(13, 16#86#),
-    write_cmd(14, 16#FF#),
-    write_cmd(15, 16#FF#),
-    write_cmd(16, 16#FF#),
-    write_cmd(17, 16#FF#),
-    CMD_CALIBRATE,
-    read_cmd(63), read_cmd(63), read_cmd(63),
-    read_cmd(63), read_cmd(63), read_cmd(63),
-    read_cmd(63), read_cmd(63), read_cmd(63)
+    read_cmd(63),
+    read_cmd(63),
+    write_cmd(0,
+               16#DE#),
+    write_cmd(1,
+               16#42#),
+    write_cmd(2,
+               16#04#),
+    write_cmd(3,
+               16#00#),
+    write_cmd(4,
+               16#80#),
+    write_cmd(5,
+               16#40#),
+    write_cmd(6,
+               16#80#),
+    write_cmd(7,
+               16#00#),
+    write_cmd(8,
+               16#16#),
+    write_cmd(9,
+               16#80#),
+    write_cmd(10,
+               16#17#),
+    write_cmd(11,
+               16#80#),
+    write_cmd(12,
+               16#2C#),
+    write_cmd(13,
+               16#86#),
+    write_cmd(14,
+               16#FF#),
+    write_cmd(15,
+               16#FF#),
+    write_cmd(16,
+               16#FF#),
+    write_cmd(17,
+               16#FF#),
+    cmd_calibrate,
+    read_cmd(63),
+    read_cmd(63),
+    read_cmd(63),
+    read_cmd(63),
+    read_cmd(63),
+    read_cmd(63),
+    read_cmd(63),
+    read_cmd(63),
+    read_cmd(63)
   );
 
-  constant INIT_LEN : natural := INIT_ROM'length;
+  constant init_len : natural := init_rom'length;
 
-  type state_t is (ST_IDLE, ST_INIT, ST_RUN);
+  type state_t is (st_idle, st_init, st_run);
 
   signal state : state_t;
 
@@ -191,8 +216,8 @@ architecture rtl of argus_rhd_spi_master is
   signal bit_num : unsigned(3 downto 0);
 
   signal shift_out : std_logic_vector(15 downto 0);
-  signal capture   : std_logic_vector(CHIP_COUNT * 16 - 1 downto 0);
-  signal held      : std_logic_vector(CHIP_COUNT * 16 - 1 downto 0);
+  signal capture   : std_logic_vector(chip_count * 16 - 1 downto 0);
+  signal held      : std_logic_vector(chip_count * 16 - 1 downto 0);
 
   -- Three-deep tag pipeline. Pushed at slot start, read at slot end, so the
   -- oldest entry describes the command two slots back -- the one whose
@@ -227,7 +252,7 @@ begin
     report "SCLK_DIV above 16: phase counter range exceeded"
     severity failure;
 
-  assert SLOT_CLOCKS > CS_STOP + 20
+  assert SLOT_CLOCKS > cs_stop + 20
     report "SLOT_CLOCKS leaves less than 160 ns of CS-high time (tCSOFF is 154 ns)"
     severity failure;
 
@@ -241,7 +266,7 @@ begin
 
   begin
 
-    if (state = ST_RUN) then
+    if (state = st_run) then
       ch       := resize(seq_idx(5 downto 0), 6);
       next_cmd <= convert_cmd(ch);
       next_ch  <= ch;
@@ -263,7 +288,7 @@ begin
 
     if rising_edge(clk) then
       if (rst_n = '0') then
-        state     <= ST_IDLE;
+        state     <= st_idle;
         clk_cnt   <= (others => '0');
         seq_idx   <= (others => '0');
         phase     <= 0;
@@ -289,7 +314,7 @@ begin
 
         case state is
 
-          when ST_IDLE =>
+          when st_idle =>
 
             cs_n_r  <= '1';
             sclk_r  <= '0';
@@ -297,10 +322,10 @@ begin
             seq_idx <= (others => '0');
 
             if (enable = '1') then
-              state <= ST_INIT;
+              state <= st_init;
             end if;
 
-          when ST_INIT | ST_RUN =>
+          when st_init | st_run =>
 
             --------------------------------------------------------------
             -- Slot start: load the command, push its tag, drop CS.
@@ -325,42 +350,39 @@ begin
             -- Shifting window. phase and bit_num advance only in here, so
             -- they are 0 at SCLK_START by construction.
             --------------------------------------------------------------
-            if ((clk_cnt >= SCLK_START) and (clk_cnt <= SCLK_STOP)) then
-
+            if ((clk_cnt >= sclk_start) and (clk_cnt <= sclk_stop)) then
               if (phase = 0) then
                 -- Falling edge of the previous bit: present the next one.
                 sclk_r <= '0';
                 mosi_r <= shift_out(15 - to_integer(bit_num));
-              elsif (phase = SCLK_LOW_PHASE) then
+              elsif (phase = sclk_low_phase) then
                 -- Rising edge: the slave samples MOSI, we sample MISO.
                 sclk_r <= '1';
 
-                for c in 0 to CHIP_COUNT - 1 loop
+                for c in 0 to chip_count - 1 loop
 
-                  capture(c * 16 + 15 downto c * 16) <=
-                    capture(c * 16 + 14 downto c * 16) & miso(c);
+                  capture(c * 16 + 15 downto c * 16) <= capture(c * 16 + 14 downto c * 16) & miso(c);
 
                 end loop;
 
               end if;
 
-              if (phase = SCLK_DIV - 1) then
+              if (phase = sclk_div - 1) then
                 phase   <= 0;
                 bit_num <= bit_num + 1;
               else
                 phase <= phase + 1;
               end if;
-
             end if;
 
             --------------------------------------------------------------
             -- CS hold, then CS high
             --------------------------------------------------------------
-            if (clk_cnt = SCLK_STOP + 1) then
+            if (clk_cnt = sclk_stop + 1) then
               sclk_r <= '0';
             end if;
 
-            if (clk_cnt = CS_STOP + 1) then
+            if (clk_cnt = cs_stop + 1) then
               cs_n_r <= '1';
               held   <= capture;
 
@@ -370,13 +392,13 @@ begin
               if (tag_cv_2 = '1') then
                 valid_r <= '1';
 
-                if (tag_ch_2 = CH_PER_CHIP - 1) then
+                if (tag_ch_2 = ch_per_chip - 1) then
                   last_r <= '1';
                 else
                   last_r <= '0';
                 end if;
 
-                if (tag_ch_2 >= CH_PER_CHIP) then
+                if (tag_ch_2 >= ch_per_chip) then
                   aux_r <= '1';
                 else
                   aux_r <= '0';
@@ -387,25 +409,25 @@ begin
             --------------------------------------------------------------
             -- Slot boundary: advance the sequencer.
             --------------------------------------------------------------
-            if (clk_cnt = SLOT_CLOCKS - 1) then
+            if (clk_cnt = slot_clocks - 1) then
               clk_cnt <= (others => '0');
 
-              if (state = ST_INIT) then
-                if (seq_idx = INIT_LEN - 1) then
+              if (state = st_init) then
+                if (seq_idx = init_len - 1) then
                   seq_idx <= (others => '0');
-                  state   <= ST_RUN;
+                  state   <= st_run;
                   ready_r <= '1';
                 else
                   seq_idx <= seq_idx + 1;
                 end if;
               else
-                if (seq_idx = SWEEP_SLOTS - 1) then
+                if (seq_idx = sweep_slots - 1) then
                   seq_idx <= (others => '0');
 
                   -- Park only on a sweep boundary, so a consumer never sees
                   -- a partial frame.
                   if (enable = '0') then
-                    state   <= ST_IDLE;
+                    state   <= st_idle;
                     ready_r <= '0';
                   end if;
                 else

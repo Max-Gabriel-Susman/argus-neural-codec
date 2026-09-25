@@ -3,17 +3,22 @@ STD       ?= 08
 WORKDIR   ?= build
 STOP_TIME ?= 20ms
 
-# Analysis order matters to GHDL. wildcard+sort is fine while rtl/ has no
-# inter-file dependencies; pin the order explicitly here the moment it does,
-# e.g.  RTL_SRCS := ../rtl/argus_pkg.vhd ../rtl/argus_rhd2132_model.vhd
-RTL_SRCS ?= $(sort $(wildcard ../rtl/*.vhd))
+# Analysis order matters to GHDL: a unit must be analysed before anything
+# that instantiates it. argus_acq_top instantiates the other four, so the
+# order is pinned here rather than left to wildcard+sort, which would put
+# argus_acq_top first alphabetically and fail with "unit not found".
+RTL_SRCS ?= ../rtl/argus_rhd2132_model.vhd \
+            ../rtl/argus_rhd_spi_master.vhd \
+            ../rtl/argus_frame_assembler.vhd \
+            ../rtl/argus_acq_axi.vhd \
+            ../rtl/argus_acq_top.vhd
 SIM_SRCS ?= $(sort $(wildcard tb_*.vhd))
 
 TBS := $(basename $(notdir $(SIM_SRCS)))
 
 # Top-level unit(s) checked by `make synth`. Simulation-only testbenches must
-# never appear here.
-SYNTH_TOPS ?= argus_rhd2132_model
+# never appear here. argus_acq_top pulls in the whole chain.
+SYNTH_TOPS ?= argus_acq_top
 
 GHDL_FLAGS := --std=$(STD) --workdir=$(WORKDIR) -frelaxed
 
