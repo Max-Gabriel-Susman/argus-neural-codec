@@ -53,7 +53,10 @@ architecture sim of tb_argus_sample_fetch is
   constant clk_period : time    := 8 ns;
   constant frames     : natural := 4 * samples_per_half;
 
-  constant bram_words : natural := 16384;   -- 64 KB / 4
+  -- Enough for both halves at this SAMPLES_PER_HALF plus a margin of the
+  -- 0xFFFF marker. Deliberately smaller than the real 64 KB: an address
+  -- past the end faults loudly in simulation instead of reading silence.
+  constant bram_words : natural := 1024;
 
   signal clk      : std_logic := '0';
   signal rst_n    : std_logic := '0';
@@ -173,7 +176,9 @@ architecture sim of tb_argus_sample_fetch is
 
   end function init_bram;
 
-  signal bram : bram_t := init_bram;
+  -- A constant, not a signal. As a signal this is half a million scalar
+  -- elements with their own event bookkeeping, and the simulation crawls.
+  constant bram : bram_t := init_bram;
 
 begin
 
@@ -188,7 +193,8 @@ begin
   begin
 
     if rising_edge(clk) then
-      if (bram_en = '1') then
+      -- is_x guards the first edge, before reset has driven the address.
+      if ((bram_en = '1') and not is_x(bram_addr)) then
         bram_dout <= bram(to_integer(unsigned(bram_addr(15 downto 2))));
       end if;
     end if;

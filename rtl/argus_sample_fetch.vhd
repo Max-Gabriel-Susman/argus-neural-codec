@@ -30,6 +30,12 @@
 --   correct for a Block Memory Generator with or without its optional
 --   output register. Slack is plentiful, so robustness wins over speed.
 --
+-- NO MULTIPLIER
+--   row_base is maintained incrementally -- add one row's worth of samples
+--   per advance, reset at each flip -- rather than computed as row * 96.
+--   Vivado infers an unregistered DSP48 for the multiply, which alone is a
+--   4-5 ns path and failed 125 MHz out of context by 0.55 ns.
+--
 -- VHDL-93 compatible.
 --------------------------------------------------------------------------------
 
@@ -102,24 +108,6 @@ architecture rtl of argus_sample_fetch is
   signal addr_r : unsigned(31 downto 0);
   signal idx    : unsigned(15 downto 0);
 
-  function base_of (
-    h : std_logic;
-    r : unsigned(15 downto 0)
-  ) return unsigned is
-
-    variable b : unsigned(15 downto 0);
-
-  begin
-
-    b := resize(r * total_channels, 16);
-
-    if (h = '1') then
-      b := b + half_samples;
-    end if;
-
-    return b;
-
-  end function base_of;
 
 begin
 
@@ -213,20 +201,21 @@ begin
             -- the end of the half.
             if (cur_ch = ch_per_chip - 1) then
               if (row = samples_per_half - 1) then
-                row      <= (others => '0');
-                half     <= not half;
-                row_base <= base_of(not half, to_unsigned(0, 16));
+                row  <= (others => '0');
+                half <= not half;
 
-                -- Hand this half to the PS. If the other half is still
-                -- marked consumed, the PS is behind and we are about to
-                -- replay stale data.
+                -- Hand this half to the PS and start the other one. If the
+                -- other half is still marked consumed, the PS is behind and
+                -- we are about to replay stale data.
                 if (half = '0') then
+                  row_base      <= to_unsigned(half_samples, 16);
                   consumed_r(0) <= '1';
 
                   if (consumed_r(1) = '1') then
                     underrun_r <= '1';
                   end if;
                 else
+                  row_base      <= (others => '0');
                   consumed_r(1) <= '1';
 
                   if (consumed_r(0) = '1') then
@@ -235,7 +224,7 @@ begin
                 end if;
               else
                 row      <= row + 1;
-                row_base <= base_of(half, row + 1);
+                row_base <= row_base + total_channels;
               end if;
             end if;
 
