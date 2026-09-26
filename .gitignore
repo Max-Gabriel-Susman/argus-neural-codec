@@ -49,3 +49,4 @@ vivado*.log
 vivado_pid*.str
 vivado_pid*.zip
 .Xil/
+nlviewcommon.logfile
