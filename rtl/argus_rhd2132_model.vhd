@@ -1,5 +1,28 @@
 -- ---------------------------------------------------------------------------
 -- argus_rhd2132_model.vhd
+--
+-- Behavioural RHD2132 SPI slave. Command decode, the two-command result
+-- pipeline, register file, CONVERT multiplexer, and CALIBRATE countdown all
+-- follow the Intan RHD2000 datasheet.
+--
+-- SAMPLE SOURCE
+--   ext_mode = '0'  sample_value() generates the built-in IDENT or RAMP
+--                   pattern (selected by the PATTERN generic).
+--   ext_mode = '1'  every CONVERT of an amplifier channel raises ext_req
+--                   with ext_ch, and the result is whatever arrives on
+--                   ext_data with ext_ack. The built-in pattern is still
+--                   written first as a fallback, so an absent fetcher
+--                   degrades to ext_mode = '0' rather than to garbage.
+--
+--   The two-command pipeline makes the external path free: resp_last is not
+--   consumed until the next retire, a full command slot later, so a fetch
+--   with a few cycles of latency is invisible on the bus.
+--
+--   Auxiliary channels (at or above CH_PER_CHIP) always use the built-in
+--   marker; the external source carries amplifier data only.
+--
+-- The new inputs carry defaults so existing instantiations that omit them
+-- keep compiling with the original behaviour.
 -- ---------------------------------------------------------------------------
 
 library ieee;
@@ -24,6 +47,13 @@ entity argus_rhd2132_model is
     mosi    : in    std_logic;
     miso    : out   std_logic;
     miso_oe : out   std_logic; -- '1' when the model is driving the line
+
+    -- External sample source. See header.
+    ext_mode : in    std_logic := '0';
+    ext_req  : out   std_logic;
+    ext_ch   : out   unsigned(5 downto 0);
+    ext_data : in    std_logic_vector(15 downto 0) := (others => '0');
+    ext_ack  : in    std_logic := '0';
 
     dbg_last_cmd  : out   std_logic_vector(15 downto 0);
     dbg_cmd_valid : out   std_logic;
@@ -65,10 +95,10 @@ architecture rtl of argus_rhd2132_model is
     r(43) := std_logic_vector(to_unsigned(character'pos('A'), 8));
     r(44) := std_logic_vector(to_unsigned(character'pos('N'), 8));
 
-    r(60) := std_logic_vector(to_unsigned(DIE_REVISION, 8));
+    r(60) := std_logic_vector(to_unsigned(die_revision, 8));
     r(61) := std_logic_vector(to_unsigned(1, 8));
-    r(62) := std_logic_vector(to_unsigned(CH_PER_CHIP, 8));
-    r(63) := std_logic_vector(to_unsigned(CHIP_TYPE_ID, 8));
+    r(62) := std_logic_vector(to_unsigned(ch_per_chip, 8));
+    r(63) := std_logic_vector(to_unsigned(chip_type_id, 8));
     return r;
 
   end function init_regfile;
@@ -87,19 +117,19 @@ architecture rtl of argus_rhd2132_model is
 
   begin
 
-    -- Channels at or above the amplifier count are auxillary sensors
-    -- (auxin1-3 on 32-34), supply voltage on 48, temperature on 49).
+    -- Channels at or above the amplifier count are auxiliary sensors
+    -- (auxin1-3 on 32-34, supply voltage on 48, temperature on 49).
     -- These are always unsigned and never affected by twoscomp. A
-    -- Distinctive contant makes  a mis-slotted auxillary command obvious.
+    -- distinctive constant makes a mis-slotted auxiliary command obvious.
     if (to_integer(unsigned(ch)) >= n_chan) then
       return x"A0" & "00" & ch;
     end if;
 
-    if (pat = PATTERN_RAMP) then
+    if (pat = pattern_ramp) then
       phase := unsigned(sample_idx) + resize(unsigned(ch), 8);
 
       ramp := shift_left(resize(signed(phase), 16), 6);
-      if (regs(REG_CONFIG)(R4_TWOSCOMP) = '1') then
+      if (regs(reg_config)(r4_twoscomp) = '1') then
         return std_logic_vector(ramp);
       else
         return std_logic_vector(unsigned(ramp) + x"8000");
@@ -119,7 +149,7 @@ architecture rtl of argus_rhd2132_model is
   begin
 
     v     := (others => '0');
-    v(15) := not regs(REG_CONFIG)(R4_TWOSCOMP);
+    v(15) := not regs(reg_config)(r4_twoscomp);
     return v;
 
   end function idle_result;
@@ -129,14 +159,14 @@ architecture rtl of argus_rhd2132_model is
   ) return boolean is
   begin
 
-    return to_integer(unsigned(addr)) < N_RAM_REGISTERS;
+    return to_integer(unsigned(addr)) < n_ram_registers;
 
   end function is_ram_register;
 
   function rhd_response (
     cmd : std_logic_vector(15 downto 0);
     mux_ch : std_logic_vector(5 downto 0); -- resolved channel
-    sample_idx :std_logic_vector(7 downto 0);
+    sample_idx : std_logic_vector(7 downto 0);
     regs : regfile_t;
     chip : natural;
     pat : natural;
@@ -146,16 +176,16 @@ architecture rtl of argus_rhd2132_model is
 
     case cmd(15 downto 14) is
 
-      when OP_CONVERT =>
+      when op_convert =>
 
         return sample_value(mux_ch, sample_idx, regs, chip, pat, n_chan);
 
-      when OP_WRITE =>
+      when op_write =>
 
-        -- Data exhoed in the low byte; upper byte is all ones.
+        -- Data echoed in the low byte; upper byte is all ones.
         return x"FF" & cmd(7 downto 0);
 
-      when OP_READ =>
+      when op_read =>
 
         return x"00" & regs(to_integer(unsigned(cmd(13 downto 8))));
 
@@ -191,6 +221,9 @@ architecture rtl of argus_rhd2132_model is
   signal mux_ch        : unsigned(5 downto 0);
   signal cal_countdown : unsigned(3 downto 0);
 
+  signal ext_req_r : std_logic;
+  signal ext_ch_r  : unsigned(5 downto 0);
+
 begin
 
   sclk_rise   <= sclk and not sclk_q;
@@ -219,9 +252,18 @@ begin
         mux_ch        <= (others => '0');
         cal_countdown <= (others => '0');
         cmd_valid     <= '0';
-        shift_in      <= (others => '0');
+        ext_req_r     <= '0';
+        ext_ch_r      <= (others => '0');
       else
         cmd_valid <= '0';
+        ext_req_r <= '0';
+
+        -- External sample arrives some cycles after the retire that
+        -- requested it. Placed before the retire block so a retire in the
+        -- same cycle -- which would be a fetcher bug -- takes priority.
+        if (ext_ack = '1') then
+          resp_last <= ext_data;
+        end if;
 
         if (cs_assert = '1') then
           bit_cnt   <= (others => '0');
@@ -239,6 +281,7 @@ begin
             shift_out <= shift_out(14 downto 0) & '0';
           end if;
         end if;
+
         -- End of frame: retire the command and advance the pipeline.
         if ((cs_deassert = '1') and (bit_cnt = 16)) then
           last_cmd  <= shift_in;
@@ -268,6 +311,13 @@ begin
               if (conv_ch = ch_per_chip - 1) then
                 sample_idx <= std_logic_vector(unsigned(sample_idx) + 1);
               end if;
+
+              -- Ask the fetcher for this channel's sample. The built-in
+              -- value below stands until (and unless) ext_ack overrides it.
+              if ((ext_mode = '1') and (conv_ch < ch_per_chip)) then
+                ext_req_r <= '1';
+                ext_ch_r  <= conv_ch;
+              end if;
             end if;
 
             -- Writes to ROM or non-existent registers are
@@ -275,7 +325,7 @@ begin
             if ((shift_in(15 downto 14) = op_write)
                 and is_ram_register(shift_in(13 downto 8))) then
               regfile(to_integer(unsigned(shift_in(13 downto 8))))
- <= shift_in(7 downto 0);
+                <= shift_in(7 downto 0);
             end if;
 
             if (shift_in = cmd_calibrate) then
@@ -299,6 +349,9 @@ begin
   miso    <= shift_out(15);
   miso_oe <= '1' when cs_n = '0' else
              regfile(reg_config)(r4_weak_miso);
+
+  ext_req <= ext_req_r;
+  ext_ch  <= ext_ch_r;
 
   dbg_last_cmd  <= last_cmd;
   dbg_cmd_valid <= cmd_valid;

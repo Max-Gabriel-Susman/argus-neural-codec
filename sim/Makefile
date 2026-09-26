@@ -10,6 +10,7 @@ STOP_TIME ?= 20ms
 RTL_SRCS ?= ../rtl/argus_rhd2132_model.vhd \
             ../rtl/argus_rhd_spi_master.vhd \
             ../rtl/argus_frame_assembler.vhd \
+            ../rtl/argus_sample_fetch.vhd \
             ../rtl/argus_acq_axi.vhd \
             ../rtl/argus_acq_top.vhd
 SIM_SRCS ?= $(sort $(wildcard tb_*.vhd))

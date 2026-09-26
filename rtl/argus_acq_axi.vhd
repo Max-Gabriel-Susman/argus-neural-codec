@@ -5,13 +5,25 @@
 --
 -- REGISTER MAP (byte offsets, 32-bit words)
 --
---   0x000  CTRL         RW   bit 0  enable      start / park the master
---                            bit 1  soft_reset  hold the chain in reset
---   0x004  STATUS       RO   bit 0  ready       init sequence complete
---                            bit 1  overrun     assembler dropped a slot
---   0x008  FRAME_INDEX  RO   increments once per completed sweep
---   0x00C  ID           RO   0x41435131 "ACQ1" -- read this first
---   0x100  FRAME[0]     RO   one 16-bit sample in the low half of each word
+--   0x000  CTRL           RW   bit 0  enable      start / park the master
+--                              bit 1  soft_reset  hold the chain in reset
+--                              bit 2  ext_mode    chips serve BRAM samples
+--                                                 instead of the built-in
+--                                                 pattern
+--   0x004  STATUS         RO   bit 0  ready       init sequence complete
+--                              bit 1  overrun     assembler dropped a slot
+--   0x008  FRAME_INDEX    RO   increments once per completed sweep
+--   0x00C  ID             RO   0x41435131 "ACQ1" -- read this first
+--   0x010  REPLAY_STATUS  RO   bit 0     play_half   half being played
+--                              bit 1     consumed0   half 0 needs refill
+--                              bit 2     consumed1   half 1 needs refill
+--                              bit 3     underrun    flipped into an
+--                                                    unrefilled half
+--                              bits 23:8 play_row    row within the half
+--   0x014  REPLAY_ACK     WO   bit 0  clear consumed0 (write 1)
+--                              bit 1  clear consumed1
+--                              bit 2  clear underrun
+--   0x100  FRAME[0]       RO   one 16-bit sample in the low half of each word
 --     ..
 --   0x27C  FRAME[95]
 --
@@ -69,9 +81,18 @@ entity argus_acq_axi is
     -- Control out, status in
     enable      : out   std_logic;
     soft_reset  : out   std_logic;
+    ext_mode    : out   std_logic;
     ready       : in    std_logic;
     overrun     : in    std_logic;
     frame_index : in    unsigned(31 downto 0);
+
+    -- Replay playback, from / to the fetcher
+    play_half      : in    std_logic;
+    play_row       : in    unsigned(15 downto 0);
+    half_consumed  : in    std_logic_vector(1 downto 0);
+    replay_underrun : in   std_logic;
+    ack_consumed   : out   std_logic_vector(1 downto 0);
+    clear_underrun : out   std_logic;
 
     -- Frame read port, to the assembler
     rd_en   : out   std_logic;
@@ -86,16 +107,17 @@ architecture rtl of argus_acq_axi is
   constant unmapped : std_logic_vector(31 downto 0) := x"DEADBEEF";
 
   -- Word addresses.
-  constant w_ctrl        : natural := 0;
-  constant w_status      : natural := 1;
-  constant w_frame_index : natural := 2;
-  constant w_id          : natural := 3;
-  constant w_frame_base  : natural := 64;    -- 0x100
+  constant w_ctrl          : natural := 0;
+  constant w_status        : natural := 1;
+  constant w_frame_index   : natural := 2;
+  constant w_id            : natural := 3;
+  constant w_replay_status : natural := 4;
+  constant w_replay_ack    : natural := 5;
+  constant w_frame_base    : natural := 64;    -- 0x100
 
   constant resp_okay : std_logic_vector(1 downto 0) := "00";
 
   type wr_state_t is (wr_idle, wr_resp);
-
   type rd_state_t is (rd_idle, rd_ram, rd_wait, rd_resp);
 
   signal wr_state : wr_state_t;
@@ -115,6 +137,10 @@ architecture rtl of argus_acq_axi is
 
   signal ctrl_enable : std_logic;
   signal ctrl_reset  : std_logic;
+  signal ctrl_ext    : std_logic;
+
+  signal ack_r   : std_logic_vector(1 downto 0);
+  signal clr_r   : std_logic;
 
   signal rd_en_r   : std_logic;
   signal rd_addr_r : unsigned(7 downto 0);
@@ -130,8 +156,8 @@ architecture rtl of argus_acq_axi is
 
 begin
 
-  assert C_S_AXI_ADDR_WIDTH >= 10
-    report "C_S_AXI_ADDR_WIDTH must cover the 0x27C frame region"
+  assert c_s_axi_addr_width >= 10
+    report "c_s_axi_addr_width must cover the 0x27C frame region"
     severity failure;
 
   --------------------------------------------------------------------------
@@ -152,7 +178,13 @@ begin
         wr_strb     <= (others => '0');
         ctrl_enable <= '0';
         ctrl_reset  <= '0';
+        ctrl_ext    <= '0';
+        ack_r       <= (others => '0');
+        clr_r       <= '0';
       else
+        -- Pulses.
+        ack_r <= (others => '0');
+        clr_r <= '0';
 
         case wr_state is
 
@@ -173,11 +205,28 @@ begin
               awready_r <= '0';
               wready_r  <= '0';
 
-              -- Only CTRL is writable. Writes elsewhere are acknowledged and
-              -- discarded, matching read-only register semantics.
-              if ((wr_word = w_ctrl) and (wr_strb(0) = '1')) then
-                ctrl_enable <= wr_data(0);
-                ctrl_reset  <= wr_data(1);
+              if (wr_strb(0) = '1') then
+
+                case wr_word is
+
+                  when w_ctrl =>
+
+                    ctrl_enable <= wr_data(0);
+                    ctrl_reset  <= wr_data(1);
+                    ctrl_ext    <= wr_data(2);
+
+                  when w_replay_ack =>
+
+                    ack_r <= wr_data(1 downto 0);
+                    clr_r <= wr_data(2);
+
+                  when others =>
+
+                    -- Read-only or unmapped: acknowledged and discarded.
+                    null;
+
+                end case;
+
               end if;
 
               bvalid_r <= '1';
@@ -244,7 +293,7 @@ begin
 
                   when w_ctrl =>
 
-                    rdata_r <= (0 => ctrl_enable, 1 => ctrl_reset, others => '0');
+                    rdata_r <= (0 => ctrl_enable, 1 => ctrl_reset, 2 => ctrl_ext, others => '0');
 
                   when w_status =>
 
@@ -257,6 +306,11 @@ begin
                   when w_id =>
 
                     rdata_r <= id_value;
+
+                  when w_replay_status =>
+
+                    rdata_r <= x"00" & std_logic_vector(play_row)
+                               & "0000" & replay_underrun & half_consumed & play_half;
 
                   when others =>
 
@@ -304,9 +358,12 @@ begin
   s_axi_rresp   <= resp_okay;
   s_axi_rvalid  <= rvalid_r;
 
-  enable     <= ctrl_enable;
-  soft_reset <= ctrl_reset;
-  rd_en      <= rd_en_r;
-  rd_addr    <= rd_addr_r;
+  enable         <= ctrl_enable;
+  soft_reset     <= ctrl_reset;
+  ext_mode       <= ctrl_ext;
+  ack_consumed   <= ack_r;
+  clear_underrun <= clr_r;
+  rd_en          <= rd_en_r;
+  rd_addr        <= rd_addr_r;
 
 end architecture rtl;
