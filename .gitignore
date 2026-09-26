@@ -42,3 +42,10 @@ xsim*.log
 *.str
 webtalk*.jou
 webtalk*.log
+
+# Vivado session transcripts, backups, crash dumps and scratch
+vivado*.jou
+vivado*.log
+vivado_pid*.str
+vivado_pid*.zip
+.Xil/
