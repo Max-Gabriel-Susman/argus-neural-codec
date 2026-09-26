@@ -139,6 +139,8 @@ if { $bCheckIPs == 1 } {
    set list_check_ips "\ 
 xilinx.com:ip:processing_system7:5.5\
 xilinx.com:ip:proc_sys_reset:5.0\
+xilinx.com:ip:axi_bram_ctrl:4.1\
+xilinx.com:ip:blk_mem_gen:8.4\
 "
 
    set list_ips_missing ""
@@ -763,6 +765,14 @@ proc create_root_design { parentCell } {
   ] $processing_system7_0
 
 
+  # Create instance: ps7_0_axi_periph, and set properties
+  set ps7_0_axi_periph [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_interconnect:2.1 ps7_0_axi_periph ]
+  set_property CONFIG.NUM_MI {2} $ps7_0_axi_periph
+
+
+  # Create instance: rst_ps7_0_125M, and set properties
+  set rst_ps7_0_125M [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_ps7_0_125M ]
+
   # Create instance: argus_acq_top_0, and set properties
   set block_name argus_acq_top
   set block_cell_name argus_acq_top_0
@@ -774,38 +784,69 @@ proc create_root_design { parentCell } {
      return 1
    }
   
-  # Create instance: ps7_0_axi_periph, and set properties
-  set ps7_0_axi_periph [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_interconnect:2.1 ps7_0_axi_periph ]
-  set_property CONFIG.NUM_MI {1} $ps7_0_axi_periph
+  # Create instance: axi_bram_ctrl_0, and set properties
+  set axi_bram_ctrl_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_0 ]
+  set_property -dict [list \
+    CONFIG.PROTOCOL {AXI4LITE} \
+    CONFIG.SINGLE_PORT_BRAM {1} \
+  ] $axi_bram_ctrl_0
 
 
-  # Create instance: rst_ps7_0_125M, and set properties
-  set rst_ps7_0_125M [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_ps7_0_125M ]
+  # Create instance: blk_mem_gen_0, and set properties
+  set blk_mem_gen_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 blk_mem_gen_0 ]
+  set_property -dict [list \
+    CONFIG.Enable_B {Use_ENB_Pin} \
+    CONFIG.Memory_Type {True_Dual_Port_RAM} \
+    CONFIG.Use_RSTB_Pin {true} \
+    CONFIG.use_bram_block {BRAM_Controller} \
+  ] $blk_mem_gen_0
+
 
   # Create interface connections
+  connect_bd_intf_net -intf_net axi_bram_ctrl_0_BRAM_PORTA [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
   connect_bd_intf_net -intf_net processing_system7_0_DDR [get_bd_intf_ports DDR] [get_bd_intf_pins processing_system7_0/DDR]
   connect_bd_intf_net -intf_net processing_system7_0_FIXED_IO [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins processing_system7_0/FIXED_IO]
   connect_bd_intf_net -intf_net processing_system7_0_M_AXI_GP0 [get_bd_intf_pins processing_system7_0/M_AXI_GP0] [get_bd_intf_pins ps7_0_axi_periph/S00_AXI]
   connect_bd_intf_net -intf_net ps7_0_axi_periph_M00_AXI [get_bd_intf_pins ps7_0_axi_periph/M00_AXI] [get_bd_intf_pins argus_acq_top_0/s_axi]
+  connect_bd_intf_net -intf_net ps7_0_axi_periph_M01_AXI [get_bd_intf_pins ps7_0_axi_periph/M01_AXI] [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
 
   # Create port connections
+  connect_bd_net -net argus_acq_top_0_bram_addr  [get_bd_pins argus_acq_top_0/bram_addr] \
+  [get_bd_pins blk_mem_gen_0/addrb]
+  connect_bd_net -net argus_acq_top_0_bram_clk  [get_bd_pins argus_acq_top_0/bram_clk] \
+  [get_bd_pins blk_mem_gen_0/clkb]
+  connect_bd_net -net argus_acq_top_0_bram_din  [get_bd_pins argus_acq_top_0/bram_din] \
+  [get_bd_pins blk_mem_gen_0/dinb]
+  connect_bd_net -net argus_acq_top_0_bram_en  [get_bd_pins argus_acq_top_0/bram_en] \
+  [get_bd_pins blk_mem_gen_0/enb]
+  connect_bd_net -net argus_acq_top_0_bram_rst  [get_bd_pins argus_acq_top_0/bram_rst] \
+  [get_bd_pins blk_mem_gen_0/rstb]
+  connect_bd_net -net argus_acq_top_0_bram_we  [get_bd_pins argus_acq_top_0/bram_we] \
+  [get_bd_pins blk_mem_gen_0/web]
+  connect_bd_net -net blk_mem_gen_0_doutb  [get_bd_pins blk_mem_gen_0/doutb] \
+  [get_bd_pins argus_acq_top_0/bram_dout]
   connect_bd_net -net processing_system7_0_FCLK_CLK0  [get_bd_pins processing_system7_0/FCLK_CLK0] \
   [get_bd_pins processing_system7_0/M_AXI_GP0_ACLK] \
   [get_bd_pins ps7_0_axi_periph/S00_ACLK] \
   [get_bd_pins rst_ps7_0_125M/slowest_sync_clk] \
-  [get_bd_pins argus_acq_top_0/s_axi_aclk] \
   [get_bd_pins ps7_0_axi_periph/M00_ACLK] \
-  [get_bd_pins ps7_0_axi_periph/ACLK]
+  [get_bd_pins ps7_0_axi_periph/ACLK] \
+  [get_bd_pins argus_acq_top_0/s_axi_aclk] \
+  [get_bd_pins axi_bram_ctrl_0/s_axi_aclk] \
+  [get_bd_pins ps7_0_axi_periph/M01_ACLK]
   connect_bd_net -net processing_system7_0_FCLK_RESET0_N  [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
   [get_bd_pins rst_ps7_0_125M/ext_reset_in]
   connect_bd_net -net rst_ps7_0_125M_peripheral_aresetn  [get_bd_pins rst_ps7_0_125M/peripheral_aresetn] \
   [get_bd_pins ps7_0_axi_periph/S00_ARESETN] \
-  [get_bd_pins argus_acq_top_0/s_axi_aresetn] \
   [get_bd_pins ps7_0_axi_periph/M00_ARESETN] \
-  [get_bd_pins ps7_0_axi_periph/ARESETN]
+  [get_bd_pins ps7_0_axi_periph/ARESETN] \
+  [get_bd_pins argus_acq_top_0/s_axi_aresetn] \
+  [get_bd_pins axi_bram_ctrl_0/s_axi_aresetn] \
+  [get_bd_pins ps7_0_axi_periph/M01_ARESETN]
 
   # Create address segments
   assign_bd_address -offset 0x43C00000 -range 0x00001000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs argus_acq_top_0/s_axi/reg0] -force
+  assign_bd_address -offset 0x40000000 -range 0x00010000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs axi_bram_ctrl_0/S_AXI/Mem0] -force
 
 
   # Restore current instance

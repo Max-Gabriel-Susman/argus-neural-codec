@@ -26,7 +26,19 @@ set top_src $repo/rtl/argus_acq_top.vhd
 
 open_bd_design [get_files neural_codec.bd]
 
-# -- 1. Force re-elaboration of argus_acq_top.
+# -- 1. Make sure every RTL file is in the project. The module reference's
+#       out-of-context synthesis resolves argus_acq_top's dependencies from
+#       the project source set, so a file present on disk but never added --
+#       argus_sample_fetch.vhd, the first time -- fails there with "no such
+#       design unit" even though the OOC check, which reads rtl/ directly,
+#       passed.
+foreach f [glob $repo/rtl/*.vhd] {
+  if {[get_files -quiet [file tail $f]] eq ""} {
+    add_files -norecurse $f
+  }
+}
+
+# -- 2. Force re-elaboration of argus_acq_top.
 if {[get_bd_cells -quiet argus_acq_top_0] ne ""} {
   delete_bd_objs [get_bd_cells argus_acq_top_0]
 }
@@ -47,7 +59,14 @@ if {[get_bd_pins -quiet argus_acq_top_0/bram_addr] eq ""} {
 set have_bram_intf [expr {[get_bd_intf_pins -quiet argus_acq_top_0/bram] ne ""}]
 puts "argus_acq_top_0 recreated; BRAM interface inferred: $have_bram_intf"
 
-# -- 2. Restore S_AXI onto the existing interconnect and pin the address.
+# bram_clk is inferred as an output clock interface and Vivado wants a
+# frequency on it. Nothing consumes it -- port B is wired pin-by-pin -- but
+# without this it raises a critical warning on every regeneration.
+if {[get_bd_intf_pins -quiet argus_acq_top_0/bram_clk] ne ""} {
+  set_property CONFIG.FREQ_HZ 125000000 [get_bd_intf_pins argus_acq_top_0/bram_clk]
+}
+
+# -- 3. Restore S_AXI onto the existing interconnect and pin the address.
 apply_bd_automation -rule xilinx.com:bd_rule:axi4 \
   -config {
     Clk_master {Auto}
@@ -67,7 +86,7 @@ set acq_seg [get_bd_addr_segs \
 set_property offset 0x43C00000 $acq_seg
 set_property range  4K         $acq_seg
 
-# -- 3. AXI BRAM Controller, single port, 32-bit, AXI4-Lite.
+# -- 4. AXI BRAM Controller, single port, 32-bit, AXI4-Lite.
 if {[get_bd_cells -quiet axi_bram_ctrl_0] eq ""} {
   create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl axi_bram_ctrl_0
   set_property -dict [list \
@@ -90,7 +109,7 @@ apply_bd_automation -rule xilinx.com:bd_rule:axi4 \
   } \
   [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
 
-# -- 4. The memory. Created explicitly rather than by automation so that
+# -- 5. The memory. Created explicitly rather than by automation so that
 #       true-dual-port with an exposed port B is set before generation.
 #       Width and depth on port A come from the controller by propagation;
 #       port B follows.
@@ -109,7 +128,7 @@ if {[get_bd_intf_nets -quiet -of_objects [get_bd_intf_pins axi_bram_ctrl_0/BRAM_
                       [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
 }
 
-# -- 5. Port B to the fetcher: one interface net if Vivado inferred the
+# -- 6. Port B to the fetcher: one interface net if Vivado inferred the
 #       interface, otherwise the seven pins individually.
 if {$have_bram_intf} {
   connect_bd_intf_net [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTB] \
@@ -128,7 +147,7 @@ if {$have_bram_intf} {
   }
 }
 
-# -- 6. Pin the BRAM address.
+# -- 7. Pin the BRAM address.
 set bram_seg [get_bd_addr_segs \
                -of_objects [get_bd_addr_spaces processing_system7_0/Data] \
                -filter {NAME =~ "*axi_bram_ctrl*"}]
@@ -138,7 +157,7 @@ if {[llength $bram_seg] != 1} {
 set_property offset 0x40000000 $bram_seg
 set_property range  64K        $bram_seg
 
-# -- 7. Validate, save, regenerate, export the source of truth.
+# -- 8. Validate, save, regenerate, export the source of truth.
 validate_bd_design
 save_bd_design
 generate_target all [get_files neural_codec.bd]
