@@ -2,36 +2,72 @@
 #
 # Adds the replay sample BRAM to the neural_codec block design: an AXI BRAM
 # Controller on the same interconnect as argus_acq_top, a Block Memory
-# Generator behind it, and the BMG's port B wired to argus_acq_top's BRAM
-# master interface.
+# Generator behind it, and the BMG's port B wired to argus_acq_top's port-B
+# master.
 #
-# Run AFTER updating rtl/argus_acq_top.vhd (which gains the bram_* ports)
-# and re-sourcing nothing else. Source from the Vivado Tcl console with the
-# project open:
+# Source from the Vivado Tcl console with the project open:
 #
 #   source /home/prometheus/Documents/argus-neural-codec/tools/bd_add_bram.tcl
 #
 # Then tools/build_bitstream.tcl as before.
 #
+# WHY THIS RECREATES THE MODULE CELL
+#   update_module_reference compares against a cached elaboration that it
+#   does not invalidate when the source changes, and returns silently with
+#   nothing done. Removing the source from the project and adding it back
+#   forces a fresh parse; deleting and recreating the cell then picks it up.
+#   The cell's S_AXI connection and address are restored afterwards.
+#
 # Address: 0x40000000, 64 KB -- the first GP0 slot, below argus_acq_top at
 # 0x43C00000. Both halves of 147 x 96 x 2 bytes fit in 56,448 of the 65,536.
 
 set repo [get_property DIRECTORY [current_project]]
+set top_src $repo/rtl/argus_acq_top.vhd
 
 open_bd_design [get_files neural_codec.bd]
 
-# -- 1. Pick up the new bram_* ports on the module reference. Vivado infers
-#       a BRAM master interface from the X_INTERFACE_INFO attributes.
-update_module_reference argus_acq_top_0
-
-if {[get_bd_intf_pins -quiet argus_acq_top_0/BRAM] eq ""} {
-  error "argus_acq_top_0 has no BRAM interface after refresh -- check the\
-         x_interface_info attributes in rtl/argus_acq_top.vhd and that the\
-         file in the project is the updated one"
+# -- 1. Force re-elaboration of argus_acq_top.
+if {[get_bd_cells -quiet argus_acq_top_0] ne ""} {
+  delete_bd_objs [get_bd_cells argus_acq_top_0]
 }
 
-# -- 2. AXI BRAM Controller, single port, 32-bit data. AXI4-Lite keeps the
-#       interconnect path identical to argus_acq_top's.
+remove_files [get_files $top_src]
+add_files -norecurse $top_src
+update_compile_order -fileset sources_1
+
+create_bd_cell -type module -reference argus_acq_top argus_acq_top_0
+
+if {[get_bd_pins -quiet argus_acq_top_0/bram_addr] eq ""} {
+  error "argus_acq_top_0 still has no bram_* pins after re-adding the source.\
+         Vivado is not parsing the new entity. Paste the output of\
+         'get_bd_pins argus_acq_top_0/*' -- the port default or the attribute\
+         block in rtl/argus_acq_top.vhd is the likely cause."
+}
+
+set have_bram_intf [expr {[get_bd_intf_pins -quiet argus_acq_top_0/bram] ne ""}]
+puts "argus_acq_top_0 recreated; BRAM interface inferred: $have_bram_intf"
+
+# -- 2. Restore S_AXI onto the existing interconnect and pin the address.
+apply_bd_automation -rule xilinx.com:bd_rule:axi4 \
+  -config {
+    Clk_master {Auto}
+    Clk_slave  {Auto}
+    Clk_xbar   {Auto}
+    Master     {/processing_system7_0/M_AXI_GP0}
+    Slave      {/argus_acq_top_0/S_AXI}
+    ddr_seg    {Auto}
+    intc_ip    {/ps7_0_axi_periph}
+    master_apm {0}
+  } \
+  [get_bd_intf_pins argus_acq_top_0/S_AXI]
+
+set acq_seg [get_bd_addr_segs \
+              -of_objects [get_bd_addr_spaces processing_system7_0/Data] \
+              -filter {NAME =~ "*argus_acq_top*"}]
+set_property offset 0x43C00000 $acq_seg
+set_property range  4K         $acq_seg
+
+# -- 3. AXI BRAM Controller, single port, 32-bit, AXI4-Lite.
 if {[get_bd_cells -quiet axi_bram_ctrl_0] eq ""} {
   create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl axi_bram_ctrl_0
   set_property -dict [list \
@@ -41,7 +77,6 @@ if {[get_bd_cells -quiet axi_bram_ctrl_0] eq ""} {
   ] [get_bd_cells axi_bram_ctrl_0]
 }
 
-# -- 3. Onto the interconnect.
 apply_bd_automation -rule xilinx.com:bd_rule:axi4 \
   -config {
     Clk_master {Auto}
@@ -55,34 +90,53 @@ apply_bd_automation -rule xilinx.com:bd_rule:axi4 \
   } \
   [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
 
-# -- 4. The memory itself. Automation on BRAM_PORTA creates a BMG in
-#       BRAM-controller mode; then make it true-dual-port so port B exists.
-apply_bd_automation -rule xilinx.com:bd_rule:bram_cntlr \
-  -config {BRAM "New Blk_Mem_Gen"} \
-  [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA]
-
-set bmg [get_bd_cells -quiet -filter {VLNV =~ "xilinx.com:ip:blk_mem_gen:*"}]
-if {[llength $bmg] != 1} {
-  error "expected exactly one blk_mem_gen after automation, found: $bmg"
-}
-set_property CONFIG.Memory_Type {True_Dual_Port_RAM} $bmg
-
-# -- 5. Port B to the fetcher.
-if {[get_bd_intf_nets -quiet -of_objects [get_bd_intf_pins argus_acq_top_0/BRAM]] eq ""} {
-  connect_bd_intf_net [get_bd_intf_pins $bmg/BRAM_PORTB] \
-                      [get_bd_intf_pins argus_acq_top_0/BRAM]
+# -- 4. The memory. Created explicitly rather than by automation so that
+#       true-dual-port with an exposed port B is set before generation.
+#       Width and depth on port A come from the controller by propagation;
+#       port B follows.
+if {[get_bd_cells -quiet blk_mem_gen_0] eq ""} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen blk_mem_gen_0
+  set_property -dict [list \
+    CONFIG.use_bram_block {BRAM_Controller} \
+    CONFIG.Memory_Type {True_Dual_Port_RAM} \
+    CONFIG.Enable_B {Use_ENB_Pin} \
+    CONFIG.Use_RSTB_Pin {true} \
+  ] [get_bd_cells blk_mem_gen_0]
 }
 
-# -- 6. Pin the address. Same reasoning as argus_acq_top: the firmware
-#       hardcodes it, so it must not move on regeneration.
-set seg [get_bd_addr_segs \
-          -of_objects [get_bd_addr_spaces processing_system7_0/Data] \
-          -filter {NAME =~ "*axi_bram_ctrl*"}]
-if {[llength $seg] != 1} {
-  error "expected one address segment for axi_bram_ctrl_0, found: $seg"
+if {[get_bd_intf_nets -quiet -of_objects [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA]] eq ""} {
+  connect_bd_intf_net [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] \
+                      [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
 }
-set_property offset 0x40000000 $seg
-set_property range  64K        $seg
+
+# -- 5. Port B to the fetcher: one interface net if Vivado inferred the
+#       interface, otherwise the seven pins individually.
+if {$have_bram_intf} {
+  connect_bd_intf_net [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTB] \
+                      [get_bd_intf_pins argus_acq_top_0/bram]
+} else {
+  foreach {mine theirs} {
+    bram_clk  clkb
+    bram_rst  rstb
+    bram_en   enb
+    bram_we   web
+    bram_addr addrb
+    bram_din  dinb
+    bram_dout doutb
+  } {
+    connect_bd_net [get_bd_pins argus_acq_top_0/$mine] [get_bd_pins blk_mem_gen_0/$theirs]
+  }
+}
+
+# -- 6. Pin the BRAM address.
+set bram_seg [get_bd_addr_segs \
+               -of_objects [get_bd_addr_spaces processing_system7_0/Data] \
+               -filter {NAME =~ "*axi_bram_ctrl*"}]
+if {[llength $bram_seg] != 1} {
+  error "expected one address segment for axi_bram_ctrl_0, found: $bram_seg"
+}
+set_property offset 0x40000000 $bram_seg
+set_property range  64K        $bram_seg
 
 # -- 7. Validate, save, regenerate, export the source of truth.
 validate_bd_design
@@ -91,11 +145,10 @@ generate_target all [get_files neural_codec.bd]
 write_bd_tcl -force $repo/neural_codec_bd.tcl
 
 puts ""
-puts "axi_bram_ctrl_0 at [get_property offset $seg], range [get_property range $seg]"
-puts "argus_acq_top_0 at [get_property offset [get_bd_addr_segs -of_objects \
-       [get_bd_addr_spaces processing_system7_0/Data] -filter {NAME =~ "*argus_acq_top*"}]]"
+puts "argus_acq_top_0  at [get_property offset $acq_seg], range [get_property range $acq_seg]"
+puts "axi_bram_ctrl_0  at [get_property offset $bram_seg], range [get_property range $bram_seg]"
 puts "Cells: [get_bd_cells]"
 puts ""
-puts "Review the diagram -- BMG port B should run to argus_acq_top_0/BRAM -- then:"
+puts "Review the diagram -- BMG port B should run to argus_acq_top_0 -- then:"
 puts "  source $repo/tools/build_bitstream.tcl"
 puts ""

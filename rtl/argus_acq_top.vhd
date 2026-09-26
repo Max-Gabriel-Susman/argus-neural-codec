@@ -25,10 +25,12 @@
 --                  block, so the PS can restart acquisition from a known
 --                  state without losing the bus
 --
--- Port names follow the AXI4-Lite and BRAM interface conventions, and the
--- BRAM ports carry X_INTERFACE_INFO attributes, so the block design infers
--- both interfaces when this is added as an RTL module. bram_dout has a
--- default so testbenches that predate the port keep compiling.
+-- Port names follow the AXI4-Lite convention, so the block design infers
+-- S_AXI when this is added as an RTL module. The bram_* ports are connected
+-- to the Block Memory Generator's port B pin-by-pin (tools/bd_add_bram.tcl):
+-- X_INTERFACE_INFO attributes in the entity and a default on bram_dout both
+-- made Vivado's module-reference elaborator reject the entity outright and
+-- silently keep the previous port list.
 --
 -- VHDL-93 compatible.
 --------------------------------------------------------------------------------
@@ -79,23 +81,8 @@ entity argus_acq_top is
     bram_we   : out   std_logic_vector(3 downto 0);
     bram_addr : out   std_logic_vector(31 downto 0);
     bram_din  : out   std_logic_vector(31 downto 0);
-    bram_dout : in    std_logic_vector(31 downto 0) := (others => '0')
+    bram_dout : in    std_logic_vector(31 downto 0)
   );
-
-  attribute x_interface_info      : string;
-  attribute x_interface_parameter : string;
-
-  attribute x_interface_info of bram_clk  : signal is "xilinx.com:interface:bram:1.0 BRAM CLK";
-  attribute x_interface_info of bram_rst  : signal is "xilinx.com:interface:bram:1.0 BRAM RST";
-  attribute x_interface_info of bram_en   : signal is "xilinx.com:interface:bram:1.0 BRAM EN";
-  attribute x_interface_info of bram_we   : signal is "xilinx.com:interface:bram:1.0 BRAM WE";
-  attribute x_interface_info of bram_addr : signal is "xilinx.com:interface:bram:1.0 BRAM ADDR";
-  attribute x_interface_info of bram_din  : signal is "xilinx.com:interface:bram:1.0 BRAM DIN";
-  attribute x_interface_info of bram_dout : signal is "xilinx.com:interface:bram:1.0 BRAM DOUT";
-
-  attribute x_interface_parameter of bram_addr : signal is
-    "MASTER_TYPE BRAM_CTRL, MEM_SIZE 65536, MEM_WIDTH 32, MEM_ECC NONE, READ_WRITE_MODE READ_WRITE";
-
 end entity argus_acq_top;
 
 architecture rtl of argus_acq_top is

@@ -34,31 +34,31 @@ end entity tb_argus_acq_top;
 
 architecture sim of tb_argus_acq_top is
 
-  constant chip_count  : natural := 3;
-  constant ch_per_chip : natural := 32;
-  constant aux_slots   : natural := 3;
-  constant slot_clocks : natural := 119;
-  constant sclk_div    : natural := 5;
-  constant addr_w      : natural := 12;
+  constant CHIP_COUNT  : natural := 3;
+  constant CH_PER_CHIP : natural := 32;
+  constant AUX_SLOTS   : natural := 3;
+  constant SLOT_CLOCKS : natural := 119;
+  constant SCLK_DIV    : natural := 5;
+  constant ADDR_W      : natural := 12;
 
-  constant total_channels : natural := chip_count * ch_per_chip;
+  constant TOTAL_CHANNELS : natural := CHIP_COUNT * CH_PER_CHIP;
 
-  constant clk_period : time := 8 ns;
+  constant CLK_PERIOD : time := 8 ns;
 
-  constant reg_ctrl        : natural := 16#000#;
-  constant reg_status      : natural := 16#004#;
-  constant reg_frame_index : natural := 16#008#;
-  constant reg_id          : natural := 16#00C#;
-  constant reg_frame_base  : natural := 16#100#;
-  constant reg_unmapped    : natural := 16#080#;
+  constant REG_CTRL        : natural := 16#000#;
+  constant REG_STATUS      : natural := 16#004#;
+  constant REG_FRAME_INDEX : natural := 16#008#;
+  constant REG_ID          : natural := 16#00C#;
+  constant REG_FRAME_BASE  : natural := 16#100#;
+  constant REG_UNMAPPED    : natural := 16#080#;
 
-  constant id_expect : std_logic_vector(31 downto 0) := x"41435131";
-  constant unmapped  : std_logic_vector(31 downto 0) := x"DEADBEEF";
+  constant ID_EXPECT : std_logic_vector(31 downto 0) := x"41435131";
+  constant UNMAPPED  : std_logic_vector(31 downto 0) := x"DEADBEEF";
 
   signal clk    : std_logic := '0';
   signal resetn : std_logic := '0';
 
-  signal awaddr  : std_logic_vector(addr_w - 1 downto 0) := (others => '0');
+  signal awaddr  : std_logic_vector(ADDR_W - 1 downto 0) := (others => '0');
   signal awprot  : std_logic_vector(2 downto 0)          := (others => '0');
   signal awvalid : std_logic                             := '0';
   signal awready : std_logic;
@@ -69,7 +69,7 @@ architecture sim of tb_argus_acq_top is
   signal bresp   : std_logic_vector(1 downto 0);
   signal bvalid  : std_logic;
   signal bready  : std_logic                             := '0';
-  signal araddr  : std_logic_vector(addr_w - 1 downto 0) := (others => '0');
+  signal araddr  : std_logic_vector(ADDR_W - 1 downto 0) := (others => '0');
   signal arprot  : std_logic_vector(2 downto 0)          := (others => '0');
   signal arvalid : std_logic                             := '0';
   signal arready : std_logic;
@@ -78,13 +78,15 @@ architecture sim of tb_argus_acq_top is
   signal rvalid  : std_logic;
   signal rready  : std_logic                             := '0';
 
+  -- No memory behind the top in this testbench; the chips stay on their
+  -- built-in pattern (CTRL.ext_mode is never set) so port B is unused.
+  signal bram_dout : std_logic_vector(31 downto 0) := (others => '0');
+
   signal sim_done : boolean := false;
 
-  function hex8 (
-    v : std_logic_vector(31 downto 0)
-  ) return string is
+  function hex8 (v : std_logic_vector(31 downto 0)) return string is
 
-    constant digits : string(1 to 16) := "0123456789ABCDEF";
+    constant DIGITS : string(1 to 16) := "0123456789ABCDEF";
     variable s      : string(1 to 8);
     variable nib    : integer;
 
@@ -116,17 +118,16 @@ architecture sim of tb_argus_acq_top is
 
 begin
 
-  clk <= not clk after clk_period / 2 when not sim_done else
-         '0';
+  clk <= not clk after CLK_PERIOD / 2 when not sim_done else '0';
 
   dut : entity work.argus_acq_top
     generic map (
-      c_s_axi_addr_width => ADDR_W,
-      chip_count         => CHIP_COUNT,
-      ch_per_chip        => CH_PER_CHIP,
-      aux_slots          => AUX_SLOTS,
-      slot_clocks        => SLOT_CLOCKS,
-      sclk_div           => SCLK_DIV
+      C_S_AXI_ADDR_WIDTH => ADDR_W,
+      CHIP_COUNT         => CHIP_COUNT,
+      CH_PER_CHIP        => CH_PER_CHIP,
+      AUX_SLOTS          => AUX_SLOTS,
+      SLOT_CLOCKS        => SLOT_CLOCKS,
+      SCLK_DIV           => SCLK_DIV
     )
     port map (
       s_axi_aclk    => clk,
@@ -149,7 +150,14 @@ begin
       s_axi_rdata   => rdata,
       s_axi_rresp   => rresp,
       s_axi_rvalid  => rvalid,
-      s_axi_rready  => rready
+      s_axi_rready  => rready,
+      bram_clk      => open,
+      bram_rst      => open,
+      bram_en       => open,
+      bram_we       => open,
+      bram_addr     => open,
+      bram_din      => open,
+      bram_dout     => bram_dout
     );
 
   stim : process is
@@ -209,7 +217,7 @@ begin
 
       rready <= '1';
       wait until rising_edge(clk) and rvalid = '1';
-      data   := rdata;
+      data := rdata;
       rready <= '0';
 
       if (rresp /= "00") then
@@ -221,9 +229,9 @@ begin
     end procedure axi_read;
 
     procedure expect (
-      addr : in    natural;
-      want : in    std_logic_vector(31 downto 0);
-      what : in    string
+      addr     : in    natural;
+      expected : in    std_logic_vector(31 downto 0);
+      what     : in    string
     ) is
 
       variable got : std_logic_vector(31 downto 0);
@@ -232,9 +240,9 @@ begin
 
       axi_read(addr, got);
 
-      if (got /= want) then
+      if (got /= expected) then
         errs := errs + 1;
-        report "FAIL " & what & ": " & hex8(got) & ", expected " & hex8(want)
+        report "FAIL " & what & ": " & hex8(got) & ", expected " & hex8(expected)
           severity error;
       end if;
 
@@ -243,9 +251,9 @@ begin
   begin
 
     resetn <= '0';
-    wait for 20 * clk_period;
+    wait for 20 * CLK_PERIOD;
     resetn <= '1';
-    wait for 20 * clk_period;
+    wait for 20 * CLK_PERIOD;
 
     ----------------------------------------------------------------------
     -- 1. The address map is where we think it is.
@@ -268,22 +276,16 @@ begin
     expect(REG_CTRL, x"00000001", "CTRL readback");
 
     tries := 0;
-
     loop
-
       axi_read(REG_STATUS, v);
       exit when v(0) = '1';
       tries := tries + 1;
-
       if (tries > 1000) then
         errs := errs + 1;
-        report "FAIL: ready never asserted"
-          severity error;
+        report "FAIL: ready never asserted" severity error;
         exit;
       end if;
-
       wait for 1 us;
-
     end loop;
 
     report "ready after " & integer'image(tries) & " polls";
@@ -307,28 +309,22 @@ begin
     -- 5. Read a frame under a seqlock and check every word.
     ----------------------------------------------------------------------
     tries := 0;
-
     loop
-
       -- Land just after a bank switch so the whole read fits in one sweep.
       axi_read(REG_FRAME_INDEX, fi_before);
-
       loop
-
         axi_read(REG_FRAME_INDEX, fi_after);
         exit when fi_after /= fi_before;
-
       end loop;
-
       fi_before := fi_after;
 
       axi_read(REG_FRAME_BASE, v);
       frame_idx := unsigned(v(7 downto 0));
 
-      for n in 0 to total_channels - 1 loop
+      for n in 0 to TOTAL_CHANNELS - 1 loop
 
         axi_read(REG_FRAME_BASE + 4 * n, v);
-        want := ident_word(n / ch_per_chip, to_unsigned(n mod ch_per_chip, 6), frame_idx);
+        want := ident_word(n / CH_PER_CHIP, to_unsigned(n mod CH_PER_CHIP, 6), frame_idx);
 
         if (v(15 downto 0) /= want) then
           errs := errs + 1;
@@ -350,16 +346,13 @@ begin
 
       -- The bank switched mid-read. Discard and retry, as software would.
       tries := tries + 1;
-      report "frame read torn, retrying"
-        severity note;
+      report "frame read torn, retrying" severity note;
 
       if (tries > 3) then
         errs := errs + 1;
-        report "FAIL: could not read a coherent frame in 3 tries"
-          severity error;
+        report "FAIL: could not read a coherent frame in 3 tries" severity error;
         exit;
       end if;
-
     end loop;
 
     report "frame read coherent, sample index " & integer'image(to_integer(frame_idx));
@@ -378,8 +371,7 @@ begin
     if (errs = 0) then
       report "PASS: address map, enable, sweep rate, coherent frame read, soft reset";
     else
-      report "FAIL: " & integer'image(errs) & " error(s)"
-        severity failure;
+      report "FAIL: " & integer'image(errs) & " error(s)" severity failure;
     end if;
 
     sim_done <= true;
@@ -392,9 +384,8 @@ begin
 
     wait for 20 ms;
 
-    if (not sim_done) then
-      report "FAIL: timeout"
-        severity failure;
+    if not sim_done then
+      report "FAIL: timeout" severity failure;
     end if;
 
     wait;
