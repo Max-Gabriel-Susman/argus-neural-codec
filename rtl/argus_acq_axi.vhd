@@ -10,9 +10,14 @@
 --                              bit 2  ext_mode    chips serve BRAM samples
 --                                                 instead of the built-in
 --                                                 pattern
+--                              bit 3  hold        freeze the frame read
+--                                                 bank so the PS can read
+--                                                 it coherently
 --   0x004  STATUS         RO   bit 0  ready       init sequence complete
 --                              bit 1  overrun     assembler dropped a slot
---   0x008  FRAME_INDEX    RO   increments once per completed sweep
+--                              bit 2  held        the freeze is in effect
+--                                                 and the bank has settled
+--   0x008  FRAME_INDEX    RO   sweep number of the frame in the read bank
 --   0x00C  ID             RO   0x41435131 "ACQ1" -- read this first
 --   0x010  REPLAY_STATUS  RO   bit 0     play_half   half being played
 --                              bit 1     consumed0   half 0 needs refill
@@ -33,11 +38,17 @@
 --
 -- READING A FRAME
 --   FRAME words come from the assembler's read port, which is registered, so
---   a FRAME read takes two extra cycles compared to a register. The
---   assembler is double buffered and the bank switches on every sweep, so a
---   full 96-word read must complete within one sweep (33 us at 30 kS/s) to
---   be coherent. Software should read FRAME_INDEX before and after and retry
---   if it moved -- a seqlock, no hardware needed.
+--   a FRAME read takes two extra cycles compared to a register.
+--
+--   A seqlock over FRAME_INDEX does not work here and the hardware carries
+--   the hold instead. Measured on the A9: 1083 ns per GP0 read, 114 us for
+--   all 96 words, against a 33.3 us sweep. The read is 3.4x too slow to
+--   ever fit between two bank swaps, so no number of retries helps.
+--
+--   The sequence is: set CTRL.hold, poll STATUS.held, read FRAME_INDEX and
+--   the 96 words at whatever pace, clear CTRL.hold. FRAME_INDEX is frozen
+--   alongside the bank, so it names the frame actually being read. Frames
+--   completing during the hold are discarded by the assembler.
 --
 -- The write path accepts AW and W only when both are valid, which is legal
 -- for AXI4-Lite and avoids tracking them separately.
@@ -82,8 +93,10 @@ entity argus_acq_axi is
     enable      : out   std_logic;
     soft_reset  : out   std_logic;
     ext_mode    : out   std_logic;
+    hold        : out   std_logic;
     ready       : in    std_logic;
     overrun     : in    std_logic;
+    held        : in    std_logic;
     frame_index : in    unsigned(31 downto 0);
 
     -- Replay playback, from / to the fetcher
@@ -138,6 +151,7 @@ architecture rtl of argus_acq_axi is
   signal ctrl_enable : std_logic;
   signal ctrl_reset  : std_logic;
   signal ctrl_ext    : std_logic;
+  signal ctrl_hold   : std_logic;
 
   signal ack_r   : std_logic_vector(1 downto 0);
   signal clr_r   : std_logic;
@@ -179,6 +193,7 @@ begin
         ctrl_enable <= '0';
         ctrl_reset  <= '0';
         ctrl_ext    <= '0';
+        ctrl_hold   <= '0';
         ack_r       <= (others => '0');
         clr_r       <= '0';
       else
@@ -214,6 +229,7 @@ begin
                     ctrl_enable <= wr_data(0);
                     ctrl_reset  <= wr_data(1);
                     ctrl_ext    <= wr_data(2);
+                    ctrl_hold   <= wr_data(3);
 
                   when w_replay_ack =>
 
@@ -293,11 +309,12 @@ begin
 
                   when w_ctrl =>
 
-                    rdata_r <= (0 => ctrl_enable, 1 => ctrl_reset, 2 => ctrl_ext, others => '0');
+                    rdata_r <= (0 => ctrl_enable, 1 => ctrl_reset, 2 => ctrl_ext,
+                                3 => ctrl_hold, others => '0');
 
                   when w_status =>
 
-                    rdata_r <= (0 => ready, 1 => overrun, others => '0');
+                    rdata_r <= (0 => ready, 1 => overrun, 2 => held, others => '0');
 
                   when w_frame_index =>
 
@@ -361,6 +378,7 @@ begin
   enable         <= ctrl_enable;
   soft_reset     <= ctrl_reset;
   ext_mode       <= ctrl_ext;
+  hold           <= ctrl_hold;
   ack_consumed   <= ack_r;
   clear_underrun <= clr_r;
   rd_en          <= rd_en_r;

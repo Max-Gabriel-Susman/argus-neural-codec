@@ -11,9 +11,7 @@ The long term plan is to:
   gateware for the rest of the Argus Cybernetics stack's ROS graph. This targets
   the Arty Z7's PL.
 
-- [ ] 2. TODO — item missing from the original list; fill in or renumber.
-
-- [ ] 3. Modify the Argus Cybernetics stack implementation to be a closed-loop
+- [ ] 2. Modify the Argus Cybernetics stack implementation to be a closed-loop
   interface (shape still undecided).
 
 ## Simulation
@@ -45,7 +43,7 @@ every run.
 ## Linting
 
 VHDL style is enforced by [VSG](https://github.com/jeremiah-c-leary/vhdl-style-guide)
-(VHDL Style Guide), a Python linter and auto-formatter. 
+(VHDL Style Guide), a Python linter and auto-formatter.
 
 Install it isolated from the ROS 2 system Python:
 

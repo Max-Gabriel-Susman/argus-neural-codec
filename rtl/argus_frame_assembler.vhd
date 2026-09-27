@@ -20,6 +20,24 @@
 --   between slots and only CHIP_COUNT (3) writes to make, so the margin is
 --   large; overrun is still flagged rather than assumed impossible.
 --
+-- HOLD
+--   A full 96-word read over AXI4-Lite from the A9 measures 114 us against
+--   a 33.3 us sweep, so a software seqlock can never succeed: the read is
+--   3.4x too slow to fit between two bank swaps. Asserting hold stops the
+--   bank alternating, which freezes the read bank for as long as the
+--   consumer needs. held acknowledges that the freeze is in effect and no
+--   further swap can occur, so a consumer polls held before reading rather
+--   than assuming the write took immediately.
+--
+--   The writer does not stall. It keeps filling its own bank, overwriting
+--   it each sweep, so frames completed during a hold are discarded rather
+--   than queued -- the point is a coherent snapshot, not lossless capture.
+--
+--   frame_index therefore names the frame sitting in the read bank, not the
+--   number of sweeps that have occurred. With hold low the two are the same
+--   thing. With hold high frame_index stays put, which is what lets a
+--   consumer correlate the index it reads with the data it reads.
+--
 -- VHDL-93 compatible.
 --------------------------------------------------------------------------------
 
@@ -46,9 +64,15 @@ entity argus_frame_assembler is
     slot_last    : in    std_logic;
 
     -- Pulses for one clock when a frame has finished writing and the read
-    -- port has switched to it.
+    -- port has switched to it. Suppressed while held: nothing new became
+    -- readable.
     frame_valid : out   std_logic;
     frame_index : out   unsigned(31 downto 0);
+
+    -- Freeze the read bank. held goes high once no further swap can occur;
+    -- poll it before reading.
+    hold : in    std_logic;
+    held : out   std_logic;
 
     -- Read port into the most recently completed frame. Registered: data
     -- appears the clock after rd_en.
@@ -99,6 +123,8 @@ architecture rtl of argus_frame_assembler is
 
   signal frame_valid_r : std_logic;
   signal frame_index_r : unsigned(31 downto 0);
+  signal sweep_r       : unsigned(31 downto 0);
+  signal hold_r        : std_logic;
   signal overrun_r     : std_logic;
   signal rd_data_r     : std_logic_vector(15 downto 0);
 
@@ -132,9 +158,16 @@ begin
         lat_last      <= '0';
         frame_valid_r <= '0';
         frame_index_r <= (others => '0');
+        sweep_r       <= (others => '0');
+        hold_r        <= '0';
         overrun_r     <= '0';
       else
         frame_valid_r <= '0';
+
+        -- Registered so the swap decision is not a combinational path out
+        -- of the register block, and so held can be derived from the same
+        -- flop the decision uses.
+        hold_r <= hold;
 
         ----------------------------------------------------------------
         -- Accept a slot. Auxiliary channels are not part of the frame;
@@ -165,12 +198,17 @@ begin
           if (wr_lane = chip_count - 1) then
             wr_busy <= '0';
 
-            -- The frame closes on the last amplifier channel. Flipping the
-            -- bank here is what hands the completed frame to the read port.
+            -- The frame closes on the last amplifier channel. Every close
+            -- advances the sweep count; only an unheld close flips the
+            -- bank, publishes the frame, and stamps its sweep number.
             if (lat_last = '1') then
-              wr_bank       <= not wr_bank;
-              frame_index_r <= frame_index_r + 1;
-              frame_valid_r <= '1';
+              sweep_r <= sweep_r + 1;
+
+              if (hold_r = '0') then
+                wr_bank       <= not wr_bank;
+                frame_index_r <= sweep_r + 1;
+                frame_valid_r <= '1';
+              end if;
             end if;
           else
             wr_lane <= wr_lane + 1;
@@ -183,7 +221,8 @@ begin
 
   ------------------------------------------------------------------------
   -- Read side. Always addresses the bank not being written, so the frame
-  -- last announced by frame_valid stays intact for a full sweep.
+  -- last announced by frame_valid stays intact for a full sweep -- or
+  -- indefinitely, while held.
   ------------------------------------------------------------------------
 
   reader : process (clk) is
@@ -212,5 +251,10 @@ begin
   frame_index <= frame_index_r;
   rd_data     <= rd_data_r;
   overrun     <= overrun_r;
+
+  -- hold_r is the flop the swap decision reads, so the clock it goes high
+  -- is the last clock a swap can occur. held is therefore true exactly
+  -- when the bank has settled.
+  held <= hold_r;
 
 end architecture rtl;
