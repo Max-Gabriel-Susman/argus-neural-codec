@@ -7,14 +7,17 @@
 -- and the bus fabric.
 --
 -- SEQUENCE
---   1. ID reads back as "ACQ1" -- the address map is where we think it is.
+--   1. ID reads back as "ACQ2" -- the address map is where we think it is,
+--      and this is the fabric revision the firmware expects.
 --   2. STATUS shows not-ready before enable; unmapped reads return the
 --      sentinel, not garbage.
 --   3. Enable; poll STATUS until ready.
 --   4. FRAME_INDEX advances at the sweep rate.
---   5. Read all 96 FRAME words under a seqlock -- FRAME_INDEX unchanged
---      across the read -- and check every word against the identity pattern
---      through the electrode map.
+--   5. Set CTRL.hold, poll STATUS.held, then read all 96 FRAME words slowly
+--      enough to span three sweeps and check every word against the
+--      identity pattern through the electrode map. FRAME_INDEX must name
+--      the frame read, must not move across the read, and must resume on
+--      release. This is what acq_read_frame() in the firmware does.
 --   6. Soft reset returns STATUS and FRAME_INDEX to zero.
 --
 -- The bus functional model is two procedures. It asserts valid and waits for
@@ -52,8 +55,13 @@ architecture sim of tb_argus_acq_top is
   constant REG_FRAME_BASE  : natural := 16#100#;
   constant REG_UNMAPPED    : natural := 16#080#;
 
-  constant ID_EXPECT : std_logic_vector(31 downto 0) := x"41435131";
+  constant ID_EXPECT : std_logic_vector(31 downto 0) := x"41435132";
   constant UNMAPPED  : std_logic_vector(31 downto 0) := x"DEADBEEF";
+
+  -- CTRL bit 0 enable, bit 3 hold. STATUS bit 2 held.
+  constant CTRL_ENABLE      : std_logic_vector(31 downto 0) := x"00000001";
+  constant CTRL_ENABLE_HOLD : std_logic_vector(31 downto 0) := x"00000009";
+  constant STATUS_HELD_BIT  : natural := 2;
 
   signal clk    : std_logic := '0';
   signal resetn : std_logic := '0';
@@ -272,8 +280,8 @@ begin
     ----------------------------------------------------------------------
     -- 3. Enable and wait for the init sequence.
     ----------------------------------------------------------------------
-    axi_write(REG_CTRL, x"00000001");
-    expect(REG_CTRL, x"00000001", "CTRL readback");
+    axi_write(REG_CTRL, CTRL_ENABLE);
+    expect(REG_CTRL, CTRL_ENABLE, "CTRL readback");
 
     tries := 0;
     loop
@@ -306,56 +314,100 @@ begin
     end if;
 
     ----------------------------------------------------------------------
-    -- 5. Read a frame under a seqlock and check every word.
+    -- 5. Read a frame under the hardware hold and check every word.
+    --
+    -- The read is deliberately slow: one word per microsecond, so the 96
+    -- words span about three sweeps, as they do from the A9. Without the
+    -- hold the bank would swap underneath it and the sample index would
+    -- change partway through. With it, every word must carry one index,
+    -- that index must be the one FRAME_INDEX named, and FRAME_INDEX must
+    -- not have moved by the end.
     ----------------------------------------------------------------------
+    axi_write(REG_CTRL, CTRL_ENABLE_HOLD);
+    expect(REG_CTRL, CTRL_ENABLE_HOLD, "CTRL readback with hold");
+
     tries := 0;
     loop
-      -- Land just after a bank switch so the whole read fits in one sweep.
-      axi_read(REG_FRAME_INDEX, fi_before);
-      loop
-        axi_read(REG_FRAME_INDEX, fi_after);
-        exit when fi_after /= fi_before;
-      end loop;
-      fi_before := fi_after;
-
-      axi_read(REG_FRAME_BASE, v);
-      frame_idx := unsigned(v(7 downto 0));
-
-      for n in 0 to TOTAL_CHANNELS - 1 loop
-
-        axi_read(REG_FRAME_BASE + 4 * n, v);
-        want := ident_word(n / CH_PER_CHIP, to_unsigned(n mod CH_PER_CHIP, 6), frame_idx);
-
-        if (v(15 downto 0) /= want) then
-          errs := errs + 1;
-          report "FAIL frame word " & integer'image(n)
-                 & ": " & hex8(v) & ", expected 0000" & hex8(x"0000" & want)(5 to 8)
-            severity error;
-        end if;
-
-        if (v(31 downto 16) /= x"0000") then
-          errs := errs + 1;
-          report "FAIL frame word " & integer'image(n) & ": upper half not zero"
-            severity error;
-        end if;
-
-      end loop;
-
-      axi_read(REG_FRAME_INDEX, fi_after);
-      exit when fi_after = fi_before;
-
-      -- The bank switched mid-read. Discard and retry, as software would.
+      axi_read(REG_STATUS, v);
+      exit when v(STATUS_HELD_BIT) = '1';
       tries := tries + 1;
-      report "frame read torn, retrying" severity note;
-
-      if (tries > 3) then
+      if (tries > 100) then
         errs := errs + 1;
-        report "FAIL: could not read a coherent frame in 3 tries" severity error;
+        report "FAIL: STATUS.held never asserted after CTRL.hold" severity error;
         exit;
       end if;
     end loop;
 
-    report "frame read coherent, sample index " & integer'image(to_integer(frame_idx));
+    report "held after " & integer'image(tries) & " polls";
+
+    axi_read(REG_FRAME_INDEX, fi_before);
+
+    axi_read(REG_FRAME_BASE, v);
+    frame_idx := unsigned(v(7 downto 0));
+
+    for n in 0 to TOTAL_CHANNELS - 1 loop
+
+      axi_read(REG_FRAME_BASE + 4 * n, v);
+      want := ident_word(n / CH_PER_CHIP, to_unsigned(n mod CH_PER_CHIP, 6), frame_idx);
+
+      if (v(15 downto 0) /= want) then
+        errs := errs + 1;
+        report "FAIL frame word " & integer'image(n)
+               & ": " & hex8(v) & ", expected 0000" & hex8(x"0000" & want)(5 to 8)
+          severity error;
+      end if;
+
+      if (v(31 downto 16) /= x"0000") then
+        errs := errs + 1;
+        report "FAIL frame word " & integer'image(n) & ": upper half not zero"
+          severity error;
+      end if;
+
+      wait for 1 us;
+
+    end loop;
+
+    -- The data's sample index must be the frame FRAME_INDEX named. The
+    -- chips stamp the sweep counter; the assembler's index is one ahead.
+    if (to_integer(frame_idx) /= (to_integer(unsigned(fi_before)) - 1) mod 256) then
+      errs := errs + 1;
+      report "FAIL: data sample index " & integer'image(to_integer(frame_idx))
+             & " does not match FRAME_INDEX " & integer'image(to_integer(unsigned(fi_before)))
+        severity error;
+    end if;
+
+    -- And FRAME_INDEX must not have moved across a read that spanned sweeps.
+    axi_read(REG_FRAME_INDEX, fi_after);
+
+    if (fi_after /= fi_before) then
+      errs := errs + 1;
+      report "FAIL: FRAME_INDEX moved from " & hex8(fi_before) & " to " & hex8(fi_after)
+             & " during the held read"
+        severity error;
+    end if;
+
+    report "held read coherent, sample index " & integer'image(to_integer(frame_idx))
+           & ", FRAME_INDEX " & integer'image(to_integer(unsigned(fi_before)));
+
+    -- Release. held drops and the index resumes.
+    axi_write(REG_CTRL, CTRL_ENABLE);
+    wait for 1 us;
+
+    axi_read(REG_STATUS, v);
+
+    if (v(STATUS_HELD_BIT) /= '0') then
+      errs := errs + 1;
+      report "FAIL: STATUS.held stuck after CTRL.hold was cleared" severity error;
+    end if;
+
+    wait for 100 us;   -- three sweeps
+    axi_read(REG_FRAME_INDEX, fi_after);
+
+    if (unsigned(fi_after) <= unsigned(fi_before)) then
+      errs := errs + 1;
+      report "FAIL: FRAME_INDEX did not resume after the hold was released"
+        severity error;
+    end if;
 
     ----------------------------------------------------------------------
     -- 6. Soft reset returns the chain to zero without disturbing the bus.
@@ -369,7 +421,7 @@ begin
 
     ----------------------------------------------------------------------
     if (errs = 0) then
-      report "PASS: address map, enable, sweep rate, coherent frame read, soft reset";
+      report "PASS: address map, enable, sweep rate, held frame read, release, soft reset";
     else
       report "FAIL: " & integer'image(errs) & " error(s)" severity failure;
     end if;

@@ -18,7 +18,7 @@
 --                              bit 2  held        the freeze is in effect
 --                                                 and the bank has settled
 --   0x008  FRAME_INDEX    RO   sweep number of the frame in the read bank
---   0x00C  ID             RO   0x41435131 "ACQ1" -- read this first
+--   0x00C  ID             RO   0x41435132 "ACQ2" -- read this first
 --   0x010  REPLAY_STATUS  RO   bit 0     play_half   half being played
 --                              bit 1     consumed0   half 0 needs refill
 --                              bit 2     consumed1   half 1 needs refill
@@ -35,6 +35,14 @@
 -- Everything else reads 0xDEADBEEF with an OKAY response. SLVERR would be
 -- more honest, but a Cortex-A9 raises a data abort on it, which is a bad
 -- way to discover an address-map typo during bring-up.
+--
+-- FABRIC REVISION
+--   ID is a revision, not a constant: bump it on any change the firmware
+--   depends on -- a register, a bit, changed semantics. The firmware checks
+--   it at boot, so a bitstream that predates the firmware fails on the first
+--   line of the smoke test instead of three lines later with a symptom that
+--   reads like an RTL bug. ACQ2 is the first build with hold/held; every
+--   build before it reported ACQ1 regardless of what it carried.
 --
 -- READING A FRAME
 --   FRAME words come from the assembler's read port, which is registered, so
@@ -116,7 +124,7 @@ end entity argus_acq_axi;
 
 architecture rtl of argus_acq_axi is
 
-  constant id_value : std_logic_vector(31 downto 0) := x"41435131";
+  constant id_value : std_logic_vector(31 downto 0) := x"41435132";
   constant unmapped : std_logic_vector(31 downto 0) := x"DEADBEEF";
 
   -- Word addresses.

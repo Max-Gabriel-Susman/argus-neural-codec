@@ -22,6 +22,18 @@ if {[get_bd_cells -quiet argus_acq_top_0] eq ""} {
   error "argus_acq_top_0 is not in the block design. Run tools/bd_add_acq.tcl first."
 }
 
+# -- 0b. Regenerate the module reference. It is synthesised out of context
+#        from a checkpoint under .gen/, and reset_run synth_1 below does not
+#        touch that run: RTL edits were being linked from a stale .dcp, and
+#        the only tell was WNS/WHS identical to the previous build. This
+#        forces the OOC run to re-read rtl/ every build.
+#
+#        Internal changes only. A port-list change still needs the
+#        delete/re-add sequence in bd_add_bram.tcl: update_module_reference
+#        compares against a cached elaboration it does not invalidate.
+update_module_reference neural_codec_argus_acq_top_0_0
+save_bd_design
+
 # -- 1. Full flow through bitstream. reset_run first so a stale synth_1 from
 #       the PS7-only design cannot be reused.
 reset_run synth_1
