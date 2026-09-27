@@ -93,8 +93,10 @@ architecture rtl of argus_acq_top is
   signal enable      : std_logic;
   signal soft_reset  : std_logic;
   signal ext_mode    : std_logic;
+  signal hold        : std_logic;
   signal ready       : std_logic;
   signal overrun     : std_logic;
+  signal held        : std_logic;
   signal frame_index : unsigned(31 downto 0);
 
   signal sclk : std_logic;
@@ -165,8 +167,10 @@ begin
       enable          => enable,
       soft_reset      => soft_reset,
       ext_mode        => ext_mode,
+      hold            => hold,
       ready           => ready,
       overrun         => overrun,
+      held            => held,
       frame_index     => frame_index,
       play_half       => play_half,
       play_row        => play_row,
@@ -207,6 +211,7 @@ begin
 
     -- All chips request the same channel on the same clock; chip 0's
     -- request drives the fetcher and the ack fans out to all of them.
+
     chip0 : if c = 0 generate
 
       chip_inst : entity work.argus_rhd2132_model(rtl)
@@ -309,6 +314,8 @@ begin
       slot_last    => slot_last,
       frame_valid  => open,
       frame_index  => frame_index,
+      hold         => hold,
+      held         => held,
       rd_en        => rd_en,
       rd_addr      => rd_addr,
       rd_data      => rd_data,
