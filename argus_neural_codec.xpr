@@ -282,9 +282,7 @@
     </Run>
     <Run Id="neural_codec_argus_acq_top_0_0_synth_1" Type="Ft3:Synth" SrcSet="neural_codec_argus_acq_top_0_0" Part="xc7z020clg400-1" ConstrsSet="neural_codec_argus_acq_top_0_0" Description="Vivado Synthesis Defaults" AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" Dir="$PRUNDIR/neural_codec_argus_acq_top_0_0_synth_1" IncludeInArchive="true" IsChild="false" AutoIncrementalDir="$PSRCDIR/utils_1/imports/neural_codec_argus_acq_top_0_0_synth_1" AutoRQSDir="$PSRCDIR/utils_1/imports/neural_codec_argus_acq_top_0_0_synth_1" ParallelReportGen="true">
       <Strategy Version="1" Minor="2">
-        <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2026">
-          <Desc>Vivado Synthesis Defaults</Desc>
-        </StratHandle>
+        <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2026"/>
         <Step Id="synth_design"/>
       </Strategy>
       <GeneratedRun Dir="$PRUNDIR" File="gen_run.xml"/>
@@ -294,9 +292,7 @@
     </Run>
     <Run Id="neural_codec_blk_mem_gen_0_0_synth_1" Type="Ft3:Synth" SrcSet="neural_codec_blk_mem_gen_0_0" Part="xc7z020clg400-1" ConstrsSet="neural_codec_blk_mem_gen_0_0" Description="Vivado Synthesis Defaults" AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" Dir="$PRUNDIR/neural_codec_blk_mem_gen_0_0_synth_1" IncludeInArchive="true" IsChild="false" AutoIncrementalDir="$PSRCDIR/utils_1/imports/neural_codec_blk_mem_gen_0_0_synth_1" AutoRQSDir="$PSRCDIR/utils_1/imports/neural_codec_blk_mem_gen_0_0_synth_1" ParallelReportGen="true">
       <Strategy Version="1" Minor="2">
-        <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2026">
-          <Desc>Vivado Synthesis Defaults</Desc>
-        </StratHandle>
+        <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2026"/>
         <Step Id="synth_design"/>
       </Strategy>
       <GeneratedRun Dir="$PRUNDIR" File="gen_run.xml"/>
@@ -306,9 +302,7 @@
     </Run>
     <Run Id="neural_codec_axi_bram_ctrl_0_0_synth_1" Type="Ft3:Synth" SrcSet="neural_codec_axi_bram_ctrl_0_0" Part="xc7z020clg400-1" ConstrsSet="neural_codec_axi_bram_ctrl_0_0" Description="Vivado Synthesis Defaults" AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" Dir="$PRUNDIR/neural_codec_axi_bram_ctrl_0_0_synth_1" IncludeInArchive="true" IsChild="false" AutoIncrementalDir="$PSRCDIR/utils_1/imports/neural_codec_axi_bram_ctrl_0_0_synth_1" AutoRQSDir="$PSRCDIR/utils_1/imports/neural_codec_axi_bram_ctrl_0_0_synth_1" ParallelReportGen="true">
       <Strategy Version="1" Minor="2">
-        <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2026">
-          <Desc>Vivado Synthesis Defaults</Desc>
-        </StratHandle>
+        <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2026"/>
         <Step Id="synth_design"/>
       </Strategy>
       <GeneratedRun Dir="$PRUNDIR" File="gen_run.xml"/>
@@ -318,9 +312,7 @@
     </Run>
     <Run Id="neural_codec_ps7_0_axi_periph_imp_xbar_0_synth_1" Type="Ft3:Synth" SrcSet="neural_codec_ps7_0_axi_periph_imp_xbar_0" Part="xc7z020clg400-1" ConstrsSet="neural_codec_ps7_0_axi_periph_imp_xbar_0" Description="Vivado Synthesis Defaults" AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" Dir="$PRUNDIR/neural_codec_ps7_0_axi_periph_imp_xbar_0_synth_1" IncludeInArchive="true" IsChild="false" AutoIncrementalDir="$PSRCDIR/utils_1/imports/neural_codec_ps7_0_axi_periph_imp_xbar_0_synth_1" AutoRQSDir="$PSRCDIR/utils_1/imports/neural_codec_ps7_0_axi_periph_imp_xbar_0_synth_1" ParallelReportGen="true">
       <Strategy Version="1" Minor="2">
-        <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2026">
-          <Desc>Vivado Synthesis Defaults</Desc>
-        </StratHandle>
+        <StratHandle Name="Vivado Synthesis Defaults" Flow="Vivado Synthesis 2026"/>
         <Step Id="synth_design"/>
       </Strategy>
       <GeneratedRun Dir="$PRUNDIR" File="gen_run.xml"/>
@@ -382,9 +374,7 @@
     </Run>
     <Run Id="neural_codec_argus_acq_top_0_0_impl_1" Type="Ft2:EntireDesign" Part="xc7z020clg400-1" ConstrsSet="neural_codec_argus_acq_top_0_0" Description="Default settings for Implementation." AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" SynthRun="neural_codec_argus_acq_top_0_0_synth_1" IncludeInArchive="false" IsChild="false" GenFullBitstream="true" AutoIncrementalDir="$PSRCDIR/utils_1/imports/neural_codec_argus_acq_top_0_0_impl_1" AutoRQSDir="$PSRCDIR/utils_1/imports/neural_codec_argus_acq_top_0_0_impl_1" ParallelReportGen="true">
       <Strategy Version="1" Minor="2">
-        <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2026">
-          <Desc>Default settings for Implementation.</Desc>
-        </StratHandle>
+        <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2026"/>
         <Step Id="init_design"/>
         <Step Id="opt_design"/>
         <Step Id="power_opt_design"/>
@@ -401,9 +391,7 @@
     </Run>
     <Run Id="neural_codec_blk_mem_gen_0_0_impl_1" Type="Ft2:EntireDesign" Part="xc7z020clg400-1" ConstrsSet="neural_codec_blk_mem_gen_0_0" Description="Default settings for Implementation." AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" SynthRun="neural_codec_blk_mem_gen_0_0_synth_1" IncludeInArchive="false" IsChild="false" GenFullBitstream="true" AutoIncrementalDir="$PSRCDIR/utils_1/imports/neural_codec_blk_mem_gen_0_0_impl_1" AutoRQSDir="$PSRCDIR/utils_1/imports/neural_codec_blk_mem_gen_0_0_impl_1" ParallelReportGen="true">
       <Strategy Version="1" Minor="2">
-        <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2026">
-          <Desc>Default settings for Implementation.</Desc>
-        </StratHandle>
+        <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2026"/>
         <Step Id="init_design"/>
         <Step Id="opt_design"/>
         <Step Id="power_opt_design"/>
@@ -420,9 +408,7 @@
     </Run>
     <Run Id="neural_codec_axi_bram_ctrl_0_0_impl_1" Type="Ft2:EntireDesign" Part="xc7z020clg400-1" ConstrsSet="neural_codec_axi_bram_ctrl_0_0" Description="Default settings for Implementation." AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" SynthRun="neural_codec_axi_bram_ctrl_0_0_synth_1" IncludeInArchive="false" IsChild="false" GenFullBitstream="true" AutoIncrementalDir="$PSRCDIR/utils_1/imports/neural_codec_axi_bram_ctrl_0_0_impl_1" AutoRQSDir="$PSRCDIR/utils_1/imports/neural_codec_axi_bram_ctrl_0_0_impl_1" ParallelReportGen="true">
       <Strategy Version="1" Minor="2">
-        <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2026">
-          <Desc>Default settings for Implementation.</Desc>
-        </StratHandle>
+        <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2026"/>
         <Step Id="init_design"/>
         <Step Id="opt_design"/>
         <Step Id="power_opt_design"/>
@@ -439,9 +425,7 @@
     </Run>
     <Run Id="neural_codec_ps7_0_axi_periph_imp_xbar_0_impl_1" Type="Ft2:EntireDesign" Part="xc7z020clg400-1" ConstrsSet="neural_codec_ps7_0_axi_periph_imp_xbar_0" Description="Default settings for Implementation." AutoIncrementalCheckpoint="false" WriteIncrSynthDcp="false" SynthRun="neural_codec_ps7_0_axi_periph_imp_xbar_0_synth_1" IncludeInArchive="false" IsChild="false" GenFullBitstream="true" AutoIncrementalDir="$PSRCDIR/utils_1/imports/neural_codec_ps7_0_axi_periph_imp_xbar_0_impl_1" AutoRQSDir="$PSRCDIR/utils_1/imports/neural_codec_ps7_0_axi_periph_imp_xbar_0_impl_1" ParallelReportGen="true">
       <Strategy Version="1" Minor="2">
-        <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2026">
-          <Desc>Default settings for Implementation.</Desc>
-        </StratHandle>
+        <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2026"/>
         <Step Id="init_design"/>
         <Step Id="opt_design"/>
         <Step Id="power_opt_design"/>
