@@ -97,7 +97,10 @@ architecture sim of tb_argus_sample_fetch is
 
   signal frame_valid : std_logic;
   signal frame_index : unsigned(31 downto 0);
-  signal rd_en       : std_logic := '0';
+  -- Never raised here; the freeze has its own testbench.
+  signal hold        : std_logic            := '0';
+  signal held        : std_logic;
+  signal rd_en       : std_logic            := '0';
   signal rd_addr     : unsigned(7 downto 0) := (others => '0');
   signal rd_data     : std_logic_vector(15 downto 0);
   signal overrun     : std_logic;
@@ -228,6 +231,7 @@ begin
   chips : for c in 0 to chip_count - 1 generate
 
     -- Chip 0's channel drives the fetcher; the ack fans out to all.
+
     chip0 : if c = 0 generate
 
       chip_inst : entity work.argus_rhd2132_model(rtl)
@@ -330,6 +334,8 @@ begin
       slot_last    => slot_last,
       frame_valid  => frame_valid,
       frame_index  => frame_index,
+      hold         => hold,
+      held         => held,
       rd_en        => rd_en,
       rd_addr      => rd_addr,
       rd_data      => rd_data,
