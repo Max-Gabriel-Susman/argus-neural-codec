@@ -13,12 +13,16 @@
 --                              bit 3  hold        freeze the frame read
 --                                                 bank so the PS can read
 --                                                 it coherently
+--                              bit 4  feat_hold   the same, for the
+--                                                 feature bank
 --   0x004  STATUS         RO   bit 0  ready       init sequence complete
 --                              bit 1  overrun     assembler dropped a slot
 --                              bit 2  held        the freeze is in effect
 --                                                 and the bank has settled
+--                              bit 3  feat_held   the same, for the
+--                                                 feature bank
 --   0x008  FRAME_INDEX    RO   sweep number of the frame in the read bank
---   0x00C  ID             RO   0x41435132 "ACQ2" -- read this first
+--   0x00C  ID             RO   0x41435133 "ACQ3" -- read this first
 --   0x010  REPLAY_STATUS  RO   bit 0     play_half   half being played
 --                              bit 1     consumed0   half 0 needs refill
 --                              bit 2     consumed1   half 1 needs refill
@@ -28,9 +32,18 @@
 --   0x014  REPLAY_ACK     WO   bit 0  clear consumed0 (write 1)
 --                              bit 1  clear consumed1
 --                              bit 2  clear underrun
+--   0x018  FEATURE_INDEX  RO   bins completed; the bank holds the latest
+--   0x01C  FEAT_DROPPED   RO   bins lost to a hold longer than one bin
 --   0x100  FRAME[0]       RO   one 16-bit sample in the low half of each word
 --     ..
 --   0x27C  FRAME[95]
+--   0x400  FEATURE[0]     RO   two words per channel:
+--                                word 0  sum[31:0]      spike-band power,
+--                                word 1  count[15:0] & sum[47:32]
+--                                        crossings in the high half, the
+--                                        sum's top 16 bits in the low
+--     ..
+--   0x6FC  FEATURE[95]
 --
 -- Everything else reads 0xDEADBEEF with an OKAY response. SLVERR would be
 -- more honest, but a Cortex-A9 raises a data abort on it, which is a bad
@@ -41,8 +54,9 @@
 --   depends on -- a register, a bit, changed semantics. The firmware checks
 --   it at boot, so a bitstream that predates the firmware fails on the first
 --   line of the smoke test instead of three lines later with a symptom that
---   reads like an RTL bug. ACQ2 is the first build with hold/held; every
---   build before it reported ACQ1 regardless of what it carried.
+--   reads like an RTL bug. ACQ2 was the first build with hold/held; every
+--   build before it reported ACQ1 regardless of what it carried. ACQ3 adds
+--   the feature bank and its registers.
 --
 -- READING A FRAME
 --   FRAME words come from the assembler's read port, which is registered, so
@@ -57,6 +71,14 @@
 --   the 96 words at whatever pace, clear CTRL.hold. FRAME_INDEX is frozen
 --   alongside the bank, so it names the frame actually being read. Frames
 --   completing during the hold are discarded by the assembler.
+--
+-- READING FEATURES
+--   FEATURE words come from argus_feature's bank through a registered port
+--   of the same shape as the frame's, so the two-cycle read applies. The
+--   bank is double-buffered and swaps once per bin, 50 ms apart; hold it
+--   with CTRL.feat_hold and poll STATUS.feat_held exactly as for a frame.
+--   A bin that completes under hold is not lost: its swap is deferred to
+--   the release. FEATURE_INDEX increments on every swap.
 --
 -- The write path accepts AW and W only when both are valid, which is legal
 -- for AXI4-Lite and avoids tracking them separately.
@@ -108,23 +130,33 @@ entity argus_acq_axi is
     frame_index : in    unsigned(31 downto 0);
 
     -- Replay playback, from / to the fetcher
-    play_half      : in    std_logic;
-    play_row       : in    unsigned(15 downto 0);
-    half_consumed  : in    std_logic_vector(1 downto 0);
-    replay_underrun : in   std_logic;
-    ack_consumed   : out   std_logic_vector(1 downto 0);
-    clear_underrun : out   std_logic;
+    play_half       : in    std_logic;
+    play_row        : in    unsigned(15 downto 0);
+    half_consumed   : in    std_logic_vector(1 downto 0);
+    replay_underrun : in    std_logic;
+    ack_consumed    : out   std_logic_vector(1 downto 0);
+    clear_underrun  : out   std_logic;
 
     -- Frame read port, to the assembler
     rd_en   : out   std_logic;
     rd_addr : out   unsigned(7 downto 0);
-    rd_data : in    std_logic_vector(15 downto 0)
+    rd_data : in    std_logic_vector(15 downto 0);
+
+    -- Feature bank, to argus_feature
+    feat_hold     : out   std_logic;
+    feat_held     : in    std_logic;
+    feature_index : in    unsigned(31 downto 0);
+    feat_dropped  : in    unsigned(15 downto 0);
+    feat_rd_en    : out   std_logic;
+    feat_rd_addr  : out   unsigned(6 downto 0);
+    feat_rd_count : in    unsigned(15 downto 0);
+    feat_rd_power : in    unsigned(47 downto 0)
   );
 end entity argus_acq_axi;
 
 architecture rtl of argus_acq_axi is
 
-  constant id_value : std_logic_vector(31 downto 0) := x"41435132";
+  constant id_value : std_logic_vector(31 downto 0) := x"41435133";
   constant unmapped : std_logic_vector(31 downto 0) := x"DEADBEEF";
 
   -- Word addresses.
@@ -134,11 +166,16 @@ architecture rtl of argus_acq_axi is
   constant w_id            : natural := 3;
   constant w_replay_status : natural := 4;
   constant w_replay_ack    : natural := 5;
-  constant w_frame_base    : natural := 64;    -- 0x100
+  constant w_feature_index : natural := 6;
+  constant w_feat_dropped  : natural := 7;
+  constant w_frame_base    : natural := 64;  -- 0x100
+  constant w_feature_base  : natural := 256; -- 0x400
+  constant feature_words   : natural := 2 * total_channels;
 
   constant resp_okay : std_logic_vector(1 downto 0) := "00";
 
   type wr_state_t is (wr_idle, wr_resp);
+
   type rd_state_t is (rd_idle, rd_ram, rd_wait, rd_resp);
 
   signal wr_state : wr_state_t;
@@ -160,12 +197,18 @@ architecture rtl of argus_acq_axi is
   signal ctrl_reset  : std_logic;
   signal ctrl_ext    : std_logic;
   signal ctrl_hold   : std_logic;
+  signal ctrl_fhold  : std_logic;
 
-  signal ack_r   : std_logic_vector(1 downto 0);
-  signal clr_r   : std_logic;
+  signal ack_r : std_logic_vector(1 downto 0);
+  signal clr_r : std_logic;
 
   signal rd_en_r   : std_logic;
   signal rd_addr_r : unsigned(7 downto 0);
+
+  signal feat_rd_en_r   : std_logic;
+  signal feat_rd_addr_r : unsigned(6 downto 0);
+  signal rd_feat        : std_logic; -- the pending RAM read is a feature word
+  signal rd_hi          : std_logic; -- ... and it is the channel's second word
 
   function word_of (
     addr : std_logic_vector
@@ -178,8 +221,8 @@ architecture rtl of argus_acq_axi is
 
 begin
 
-  assert c_s_axi_addr_width >= 10
-    report "c_s_axi_addr_width must cover the 0x27C frame region"
+  assert c_s_axi_addr_width >= 11
+    report "c_s_axi_addr_width must cover the 0x6FC feature region"
     severity failure;
 
   --------------------------------------------------------------------------
@@ -202,6 +245,7 @@ begin
         ctrl_reset  <= '0';
         ctrl_ext    <= '0';
         ctrl_hold   <= '0';
+        ctrl_fhold  <= '0';
         ack_r       <= (others => '0');
         clr_r       <= '0';
       else
@@ -238,6 +282,7 @@ begin
                     ctrl_reset  <= wr_data(1);
                     ctrl_ext    <= wr_data(2);
                     ctrl_hold   <= wr_data(3);
+                    ctrl_fhold  <= wr_data(4);
 
                   when w_replay_ack =>
 
@@ -283,15 +328,20 @@ begin
 
     if rising_edge(s_axi_aclk) then
       if (s_axi_aresetn = '0') then
-        rd_state  <= rd_idle;
-        arready_r <= '0';
-        rvalid_r  <= '0';
-        rdata_r   <= (others => '0');
-        rd_word   <= 0;
-        rd_en_r   <= '0';
-        rd_addr_r <= (others => '0');
+        rd_state       <= rd_idle;
+        arready_r      <= '0';
+        rvalid_r       <= '0';
+        rdata_r        <= (others => '0');
+        rd_word        <= 0;
+        rd_en_r        <= '0';
+        rd_addr_r      <= (others => '0');
+        feat_rd_en_r   <= '0';
+        feat_rd_addr_r <= (others => '0');
+        rd_feat        <= '0';
+        rd_hi          <= '0';
       else
-        rd_en_r <= '0';
+        rd_en_r      <= '0';
+        feat_rd_en_r <= '0';
 
         case rd_state is
 
@@ -310,19 +360,48 @@ begin
                 n         := rd_word - w_frame_base;
                 rd_addr_r <= to_unsigned(n, 8);
                 rd_en_r   <= '1';
+                rd_feat   <= '0';
                 rd_state  <= rd_ram;
+              elsif ((rd_word >= w_feature_base) and (rd_word < w_feature_base + feature_words)) then
+                -- Feature word: two per channel, same registered read.
+                n              := rd_word - w_feature_base;
+                feat_rd_addr_r <= to_unsigned(n / 2, 7);
+                feat_rd_en_r   <= '1';
+                rd_feat        <= '1';
+
+                if ((n mod 2) = 1) then
+                  rd_hi <= '1';
+                else
+                  rd_hi <= '0';
+                end if;
+
+                rd_state <= rd_ram;
               else
 
                 case rd_word is
 
                   when w_ctrl =>
 
-                    rdata_r <= (0 => ctrl_enable, 1 => ctrl_reset, 2 => ctrl_ext,
-                                3 => ctrl_hold, others => '0');
+                    rdata_r <=
+                    (
+                      0      => ctrl_enable,
+                      1      => ctrl_reset,
+                      2      => ctrl_ext,
+                      3      => ctrl_hold,
+                      4      => ctrl_fhold,
+                      others => '0'
+                    );
 
                   when w_status =>
 
-                    rdata_r <= (0 => ready, 1 => overrun, 2 => held, others => '0');
+                    rdata_r <=
+                    (
+                      0      => ready,
+                      1      => overrun,
+                      2      => held,
+                      3      => feat_held,
+                      others => '0'
+                    );
 
                   when w_frame_index =>
 
@@ -337,6 +416,14 @@ begin
                     rdata_r <= x"00" & std_logic_vector(play_row)
                                & "0000" & replay_underrun & half_consumed & play_half;
 
+                  when w_feature_index =>
+
+                    rdata_r <= std_logic_vector(feature_index);
+
+                  when w_feat_dropped =>
+
+                    rdata_r <= x"0000" & std_logic_vector(feat_dropped);
+
                   when others =>
 
                     rdata_r <= unmapped;
@@ -350,13 +437,21 @@ begin
 
           when rd_ram =>
 
-            -- rd_en was high last cycle; the assembler registers its output
-            -- on this edge. One more cycle before it is valid.
+            -- The read enable was high last cycle; the source registers its
+            -- output on this edge. One more cycle before it is valid.
             rd_state <= rd_wait;
 
           when rd_wait =>
 
-            rdata_r  <= x"0000" & rd_data;
+            if (rd_feat = '0') then
+              rdata_r <= x"0000" & rd_data;
+            elsif (rd_hi = '0') then
+              rdata_r <= std_logic_vector(feat_rd_power(31 downto 0));
+            else
+              rdata_r <= std_logic_vector(feat_rd_count)
+                         & std_logic_vector(feat_rd_power(47 downto 32));
+            end if;
+
             rvalid_r <= '1';
             rd_state <= rd_resp;
 
@@ -391,5 +486,8 @@ begin
   clear_underrun <= clr_r;
   rd_en          <= rd_en_r;
   rd_addr        <= rd_addr_r;
+  feat_hold      <= ctrl_fhold;
+  feat_rd_en     <= feat_rd_en_r;
+  feat_rd_addr   <= feat_rd_addr_r;
 
 end architecture rtl;

@@ -2,8 +2,14 @@
 -- argus_acq_top.vhd
 --
 -- The complete acquisition chain behind one AXI4-Lite interface: SPI master,
--- three simulated RHD2132 chips, sample fetcher, frame assembler, register
--- block. This is the module the block design instantiates on M_AXI_GP0.
+-- three simulated RHD2132 chips, sample fetcher, frame assembler, feature
+-- extractor, register block. This is the module the block design
+-- instantiates on M_AXI_GP0.
+--
+-- The feature extractor taps the same slot stream the assembler consumes
+-- and runs beside it: the assembler keeps the latest raw frame, the
+-- extractor keeps per-channel crossing counts and spike-band power per
+-- bin. Both expose a held, double-buffered bank to the register block.
 --
 -- The chips are internal (Option B, simulated Intan). There are no external
 -- SPI pins: the bus never leaves the fabric, so there is nothing to
@@ -121,6 +127,15 @@ architecture rtl of argus_acq_top is
   signal rd_addr : unsigned(7 downto 0);
   signal rd_data : std_logic_vector(15 downto 0);
 
+  signal feat_hold     : std_logic;
+  signal feat_held     : std_logic;
+  signal feature_index : unsigned(31 downto 0);
+  signal feat_dropped  : unsigned(15 downto 0);
+  signal feat_rd_en    : std_logic;
+  signal feat_rd_addr  : unsigned(6 downto 0);
+  signal feat_rd_count : unsigned(15 downto 0);
+  signal feat_rd_power : unsigned(47 downto 0);
+
   signal play_half       : std_logic;
   signal play_row        : unsigned(15 downto 0);
   signal half_consumed   : std_logic_vector(1 downto 0);
@@ -180,7 +195,15 @@ begin
       clear_underrun  => clear_underrun,
       rd_en           => rd_en,
       rd_addr         => rd_addr,
-      rd_data         => rd_data
+      rd_data         => rd_data,
+      feat_hold       => feat_hold,
+      feat_held       => feat_held,
+      feature_index   => feature_index,
+      feat_dropped    => feat_dropped,
+      feat_rd_en      => feat_rd_en,
+      feat_rd_addr    => feat_rd_addr,
+      feat_rd_count   => feat_rd_count,
+      feat_rd_power   => feat_rd_power
     );
 
   master : entity work.argus_rhd_spi_master(rtl)
@@ -320,6 +343,32 @@ begin
       rd_addr      => rd_addr,
       rd_data      => rd_data,
       overrun      => overrun
+    );
+
+  -- Parameters are argus_feature's defaults: the values locked by decode
+  -- accuracy on the Indy session (argus_sim/tools/README.md).
+  features : entity work.argus_feature(rtl)
+    generic map (
+      chip_count  => chip_count,
+      ch_per_chip => ch_per_chip
+    )
+    port map (
+      clk           => s_axi_aclk,
+      rst_n         => chain_rst_n,
+      slot_valid    => slot_valid,
+      slot_channel  => slot_channel,
+      slot_data     => slot_data,
+      slot_is_aux   => slot_is_aux,
+      slot_last     => slot_last,
+      hold          => feat_hold,
+      held          => feat_held,
+      feature_index => feature_index,
+      dropped       => feat_dropped,
+      busy          => open,
+      rd_en         => feat_rd_en,
+      rd_addr       => feat_rd_addr,
+      rd_count      => feat_rd_count,
+      rd_power      => feat_rd_power
     );
 
 end architecture rtl;

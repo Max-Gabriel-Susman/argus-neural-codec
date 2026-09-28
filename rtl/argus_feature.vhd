@@ -85,15 +85,15 @@ entity argus_feature is
   generic (
     chip_count    : natural := 3;
     ch_per_chip   : natural := 32;
-    b0            : integer := 31932;   -- Q1.15, 250 Hz first-order HPF at 30012 Hz
-    a1            : integer := 31096;   -- Q1.15
-    mult_num      : natural := 49;      -- threshold^2 = mult_num / 2^mult_shift x ms
-    mult_shift    : natural := 2;       --   49/4 = 12.25 = 3.5^2
-    ms_shift      : natural := 15;      -- EMA shift while tracking
-    ms_shift_fast : natural := 8;       -- EMA shift for the first 2^ms_shift sweeps
-    refrac_len    : natural := 30;      -- sweeps, ~1 ms
-    warmup        : natural := 32768;   -- sweeps before crossings count
-    bin_len       : natural := 1500     -- sweeps per bin, 50 ms
+    b0            : integer := 31932; -- Q1.15, 250 Hz first-order HPF at 30012 Hz
+    a1            : integer := 31096; -- Q1.15
+    mult_num      : natural := 49;    -- threshold^2 = mult_num / 2^mult_shift x ms
+    mult_shift    : natural := 2;     --   49/4 = 12.25 = 3.5^2
+    ms_shift      : natural := 15;    -- EMA shift while tracking
+    ms_shift_fast : natural := 8;     -- EMA shift for the first 2^ms_shift sweeps
+    refrac_len    : natural := 30;    -- sweeps, ~1 ms
+    warmup        : natural := 32768; -- sweeps before crossings count
+    bin_len       : natural := 1500   -- sweeps per bin, 50 ms
   );
   port (
     clk   : in    std_logic;
@@ -112,7 +112,7 @@ entity argus_feature is
 
     feature_index : out   unsigned(31 downto 0);
     dropped       : out   unsigned(15 downto 0);
-    busy          : out   std_logic;   -- mid-slot; a slot arriving now is lost
+    busy          : out   std_logic; -- mid-slot; a slot arriving now is lost
 
     -- Feature bank read port, registered
     rd_en    : in    std_logic;
@@ -127,14 +127,14 @@ architecture rtl of argus_feature is
   constant total_channels : natural := chip_count * ch_per_chip;
 
   -- State word layout
-  constant x1_lo    : natural := 0;    -- 16
-  constant y1_lo    : natural := 16;   -- 18
-  constant ms_lo    : natural := 34;   -- 32
-  constant below_bit : natural := 66;  -- 1
-  constant refr_lo  : natural := 67;   -- 5
-  constant cnt_lo   : natural := 72;   -- 16
-  constant pow_lo   : natural := 88;   -- 48
-  constant state_w  : natural := 136;
+  constant x1_lo     : natural := 0;  -- 16
+  constant y1_lo     : natural := 16; -- 18
+  constant ms_lo     : natural := 34; -- 32
+  constant below_bit : natural := 66; -- 1
+  constant refr_lo   : natural := 67; -- 5
+  constant cnt_lo    : natural := 72; -- 16
+  constant pow_lo    : natural := 88; -- 48
+  constant state_w   : natural := 136;
 
   type state_ram_t is array (0 to total_channels - 1) of std_logic_vector(state_w - 1 downto 0);
 
@@ -145,16 +145,19 @@ architecture rtl of argus_feature is
   signal ram_q     : std_logic_vector(state_w - 1 downto 0);
 
   -- Feature bank: two banks of total_channels, {power[47:0], count[15:0]}
+
   type bank_t is array (0 to 2 * total_channels - 1) of std_logic_vector(63 downto 0);
 
   signal bank_waddr : natural range 0 to 2 * total_channels - 1;
-  signal bank_we   : std_logic;
-  signal bank_d    : std_logic_vector(63 downto 0);
-  signal bank_q    : std_logic_vector(63 downto 0);
-  signal rd_bank   : std_logic;
+  signal bank_we    : std_logic;
+  signal bank_d     : std_logic_vector(63 downto 0);
+  signal bank_q     : std_logic_vector(63 downto 0);
+  signal rd_bank    : std_logic;
 
-  type fsm_t is (s_init, s_idle, s_read, s_unpack, s_mult, s_filter, s_square,
-                 s_ema, s_decide, s_write, s_next, s_done);
+  type fsm_t is (
+    s_init, s_idle, s_read, s_unpack, s_mult, s_filter, s_square,
+    s_ema, s_decide, s_write, s_next, s_done
+  );
 
   signal fsm : fsm_t;
 
@@ -188,21 +191,21 @@ architecture rtl of argus_feature is
   signal count      : unsigned(15 downto 0);
   signal power      : unsigned(47 downto 0);
 
-  signal d      : signed(16 downto 0);
-  signal p1     : signed(32 downto 0);
-  signal p2     : signed(33 downto 0);
-  signal y      : signed(17 downto 0);
-  signal sq     : unsigned(31 downto 0);
-  signal thrp   : unsigned(39 downto 0);
-  signal ms_new : unsigned(31 downto 0);
-  signal thr    : unsigned(39 downto 0);
-  signal below  : std_logic;
+  signal d          : signed(16 downto 0);
+  signal p1         : signed(32 downto 0);
+  signal p2         : signed(33 downto 0);
+  signal y          : signed(17 downto 0);
+  signal sq         : unsigned(31 downto 0);
+  signal thrp       : unsigned(39 downto 0);
+  signal ms_new     : unsigned(31 downto 0);
+  signal thr        : unsigned(39 downto 0);
+  signal below      : std_logic;
   signal count_new  : unsigned(15 downto 0);
   signal power_new  : unsigned(47 downto 0);
   signal refrac_new : unsigned(4 downto 0);
 
-  signal fast   : std_logic;   -- l_sweep < 2^ms_shift
-  signal warmed : std_logic;   -- l_sweep >= warmup
+  signal fast   : std_logic; -- l_sweep < 2^ms_shift
+  signal warmed : std_logic; -- l_sweep >= warmup
 
   function thr_of (
     m : unsigned(31 downto 0)
@@ -264,13 +267,13 @@ begin
 
   main : process (clk) is
 
-    variable acc      : signed(34 downto 0);
-    variable ysq      : signed(35 downto 0);
-    variable u        : unsigned(31 downto 0);
-    variable diff     : signed(33 downto 0);
-    variable step     : signed(33 downto 0);
-    variable ms_next  : signed(33 downto 0);
-    variable ch_addr  : natural range 0 to total_channels - 1;
+    variable acc     : signed(34 downto 0);
+    variable ysq     : signed(35 downto 0);
+    variable u       : unsigned(31 downto 0);
+    variable diff    : signed(33 downto 0);
+    variable step    : signed(33 downto 0);
+    variable ms_next : signed(33 downto 0);
+    variable ch_addr : natural range 0 to total_channels - 1;
 
   begin
 
@@ -394,10 +397,10 @@ begin
 
           when s_square =>
 
-            acc := resize(p1, 35) + resize(p2, 35) + to_signed(2 ** 14, 35);
-            y   <= resize(shift_right(acc, 15), 18);
+            acc  := resize(p1, 35) + resize(p2, 35) + to_signed(2 ** 14, 35);
+            y    <= resize(shift_right(acc, 15), 18);
             thrp <= thr_of(ms);
-            fsm <= s_ema;
+            fsm  <= s_ema;
 
           when s_ema =>
 
@@ -461,10 +464,10 @@ begin
             ram_waddr <= ch_addr;
             ram_we    <= '1';
 
-            ram_d(x1_lo + 15 downto x1_lo)   <= std_logic_vector(x);
-            ram_d(y1_lo + 17 downto y1_lo)   <= std_logic_vector(y);
-            ram_d(ms_lo + 31 downto ms_lo)   <= std_logic_vector(ms_new);
-            ram_d(below_bit)                 <= below;
+            ram_d(x1_lo + 15 downto x1_lo)    <= std_logic_vector(x);
+            ram_d(y1_lo + 17 downto y1_lo)    <= std_logic_vector(y);
+            ram_d(ms_lo + 31 downto ms_lo)    <= std_logic_vector(ms_new);
+            ram_d(below_bit)                  <= below;
             ram_d(refr_lo + 4 downto refr_lo) <= std_logic_vector(refrac_new);
 
             if (l_binlast = '1') then
@@ -525,6 +528,7 @@ begin
   held          <= hold_r;
   feature_index <= findex;
   dropped       <= dropped_r;
-  busy          <= '0' when fsm = s_idle else '1';
+  busy          <= '0' when fsm = s_idle else
+                   '1';
 
 end architecture rtl;

@@ -74,11 +74,11 @@ architecture sim of tb_argus_feature is
   signal clk   : std_logic := '0';
   signal rst_n : std_logic := '0';
 
-  signal slot_valid   : std_logic := '0';
-  signal slot_channel : unsigned(5 downto 0) := (others => '0');
+  signal slot_valid   : std_logic                                      := '0';
+  signal slot_channel : unsigned(5 downto 0)                           := (others => '0');
   signal slot_data    : std_logic_vector(chip_count * 16 - 1 downto 0) := (others => '0');
-  signal slot_is_aux  : std_logic := '0';
-  signal slot_last    : std_logic := '0';
+  signal slot_is_aux  : std_logic                                      := '0';
+  signal slot_last    : std_logic                                      := '0';
 
   signal hold : std_logic := '0';
   signal held : std_logic;
@@ -87,7 +87,7 @@ architecture sim of tb_argus_feature is
   signal dropped       : unsigned(15 downto 0);
   signal busy          : std_logic;
 
-  signal rd_en    : std_logic := '0';
+  signal rd_en    : std_logic            := '0';
   signal rd_addr  : unsigned(6 downto 0) := (others => '0');
   signal rd_count : unsigned(15 downto 0);
   signal rd_power : unsigned(47 downto 0);
@@ -97,7 +97,9 @@ architecture sim of tb_argus_feature is
   signal errors    : natural := 0;
 
   -- Golden, bins 0 .. n_bins-1
+
   type cnt_arr_t is array (0 to n_bins - 1, 0 to channels - 1) of natural;
+
   type pow_arr_t is array (0 to n_bins - 1, 0 to channels - 1) of unsigned(47 downto 0);
 
   function hex12 (
@@ -122,6 +124,7 @@ architecture sim of tb_argus_feature is
   end function hex12;
 
   -- Decimal up to 2^48 from a textio line; integer would overflow at 2^31.
+
   procedure read_u48 (
     l : inout line;
     v : out   unsigned(47 downto 0)
@@ -134,13 +137,17 @@ architecture sim of tb_argus_feature is
   begin
 
     loop
+
       read(l, c, good);
       exit when not good or c /= ' ';
+
     end loop;
 
     while good and c >= '0' and c <= '9' loop
+
       acc := resize(acc * 10, 48) + to_unsigned(character'pos(c) - character'pos('0'), 48);
       read(l, c, good);
+
     end loop;
 
     v := acc;
@@ -149,7 +156,8 @@ architecture sim of tb_argus_feature is
 
 begin
 
-  clk <= not clk after clk_period / 2 when not sim_done else '0';
+  clk <= not clk after clk_period / 2 when not sim_done else
+         '0';
 
   dut : entity work.argus_feature(rtl)
     generic map (
@@ -190,7 +198,7 @@ begin
 
   stim : process is
 
-    file f        : text;
+    file     f    : text;
     variable st   : file_open_status;
     variable l    : line;
     variable v    : integer;
@@ -209,7 +217,8 @@ begin
     file_open(st, f, stim_file, read_mode);
 
     if (st /= open_ok) then
-      report "FAIL: cannot open stimulus " & stim_file severity failure;
+      report "FAIL: cannot open stimulus " & stim_file
+        severity failure;
     end if;
 
     report "feeding " & integer'image(n_sweeps) & " sweeps from " & stim_file;
@@ -230,7 +239,7 @@ begin
 
         for c in 0 to chip_count - 1 loop
 
-          word := std_logic_vector(to_unsigned(row(c * ch_per_chip + ch), 16));
+          word                                 := std_logic_vector(to_unsigned(row(c * ch_per_chip + ch), 16));
           slot_data(c * 16 + 15 downto c * 16) <= word;
 
         end loop;
@@ -278,7 +287,8 @@ begin
     file_close(f);
 
     if (sw < n_sweeps) then
-      report "FAIL: stimulus has only " & integer'image(sw) & " rows" severity failure;
+      report "FAIL: stimulus has only " & integer'image(sw) & " rows"
+        severity failure;
     end if;
 
     stim_done <= true;
@@ -292,15 +302,15 @@ begin
 
   checker : process is
 
-    file f         : text;
-    variable st    : file_open_status;
-    variable l     : line;
-    variable gb    : integer;
-    variable gc    : integer;
-    variable gcnt  : integer;
-    variable gpow  : unsigned(47 downto 0);
-    variable good  : boolean;
-    variable first : character;
+    file     f        : text;
+    variable st       : file_open_status;
+    variable l        : line;
+    variable gb       : integer;
+    variable gc       : integer;
+    variable gcnt     : integer;
+    variable gpow     : unsigned(47 downto 0);
+    variable good     : boolean;
+    variable first    : character;
     variable want_cnt : cnt_arr_t;
     variable want_pow : pow_arr_t;
     variable loaded   : natural := 0;
@@ -313,7 +323,8 @@ begin
     file_open(st, f, golden_file, read_mode);
 
     if (st /= open_ok) then
-      report "FAIL: cannot open golden " & golden_file severity failure;
+      report "FAIL: cannot open golden " & golden_file
+        severity failure;
     end if;
 
     while not endfile(f) loop
@@ -361,18 +372,22 @@ begin
       -- Wait for bin b to become readable: feature_index = b + 1.
       wait until rising_edge(clk) and feature_index = to_unsigned(b + 1, 32);
 
-      hold <= '1';
+      hold  <= '1';
       polls := 0;
 
       loop
+
         wait until rising_edge(clk);
         exit when held = '1';
         polls := polls + 1;
+
         if (polls > 10) then
           errs := errs + 1;
-          report "FAIL: held never asserted" severity error;
+          report "FAIL: held never asserted"
+            severity error;
           exit;
         end if;
+
       end loop;
 
       for c in 0 to channels - 1 loop
@@ -420,14 +435,16 @@ begin
 
     -- The stimulus normally finishes a few slots before the last bin's swap,
     -- so this is usually already true; wait until only fires on an event.
-    if not stim_done then
+    if (not stim_done) then
       wait until stim_done;
     end if;
+
     wait for 100 * clk_period;
 
     if (dropped /= 0) then
       errs := errs + 1;
-      report "FAIL: dropped = " & integer'image(to_integer(dropped)) severity error;
+      report "FAIL: dropped = " & integer'image(to_integer(dropped))
+        severity error;
     end if;
 
     errors <= errs;
@@ -440,7 +457,8 @@ begin
       report "PASS: argus_feature matches spike_features.py on all "
              & integer'image(n_bins * channels) & " (bin, channel) pairs";
     else
-      report "FAIL: " & integer'image(errors) & " error(s)" severity failure;
+      report "FAIL: " & integer'image(errors) & " error(s)"
+        severity failure;
     end if;
 
     sim_done <= true;
@@ -469,8 +487,9 @@ begin
 
     wait for 2000 ms;
 
-    if not sim_done then
-      report "FAIL: timeout" severity failure;
+    if (not sim_done) then
+      report "FAIL: timeout"
+        severity failure;
     end if;
 
     wait;
