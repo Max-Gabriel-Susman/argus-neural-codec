@@ -42,9 +42,13 @@
 --   One datapath, time-multiplexed. The master emits one slot per channel
 --   index per sweep, carrying all three chips' samples for that index, 119
 --   clocks apart. This block serialises the three chips and walks each
---   sample through the arithmetic in eight clocks -- 26 per slot -- against
+--   sample through the arithmetic in eleven clocks -- 35 per slot -- against
 --   state held in a 96-entry RAM, one 136-bit word per channel. Nothing is
 --   replicated; the multipliers are three DSP48s.
+--
+--   One operation per state. The first draft did the whole EMA update and
+--   the threshold multiply in one clock and missed 125 MHz by 2.3 ns; the
+--   split below keeps every state to one carry chain or one multiplier.
 --
 --   State per channel: x1, y1, ms, below_prev, refrac, and the running
 --   count and power for the current bin.
@@ -156,7 +160,7 @@ architecture rtl of argus_feature is
 
   type fsm_t is (
     s_init, s_idle, s_read, s_unpack, s_mult, s_filter, s_square,
-    s_ema, s_decide, s_write, s_next, s_done
+    s_sq, s_ema_u, s_ema_step, s_ema_ms, s_thr, s_write, s_next, s_done
   );
 
   signal fsm : fsm_t;
@@ -197,6 +201,8 @@ architecture rtl of argus_feature is
   signal y          : signed(17 downto 0);
   signal sq         : unsigned(31 downto 0);
   signal thrp       : unsigned(39 downto 0);
+  signal u_r        : unsigned(31 downto 0);
+  signal step_r     : signed(33 downto 0);
   signal ms_new     : unsigned(31 downto 0);
   signal thr        : unsigned(39 downto 0);
   signal below      : std_logic;
@@ -269,9 +275,7 @@ begin
 
     variable acc     : signed(34 downto 0);
     variable ysq     : signed(35 downto 0);
-    variable u       : unsigned(31 downto 0);
     variable diff    : signed(33 downto 0);
-    variable step    : signed(33 downto 0);
     variable ms_next : signed(33 downto 0);
     variable ch_addr : natural range 0 to total_channels - 1;
 
@@ -400,37 +404,52 @@ begin
             acc  := resize(p1, 35) + resize(p2, 35) + to_signed(2 ** 14, 35);
             y    <= resize(shift_right(acc, 15), 18);
             thrp <= thr_of(ms);
-            fsm  <= s_ema;
+            fsm  <= s_sq;
 
-          when s_ema =>
+          when s_sq =>
 
             ysq := y * y;
             sq  <= unsigned(std_logic_vector(resize(ysq, 32)));
-            fsm <= s_decide;
+            fsm <= s_ema_u;
 
-          when s_decide =>
+          when s_ema_u =>
 
-            -- EMA input: winsorised once tracking.
+            -- EMA input, winsorised once tracking: one compare, one mux.
             if (fast = '1') then
-              u := sq;
+              u_r <= sq;
             elsif (resize(sq, 40) > thrp) then
-              u := thrp(31 downto 0);
+              u_r <= thrp(31 downto 0);
             else
-              u := sq;
+              u_r <= sq;
             end if;
 
-            diff := signed(resize(u, 34)) - signed(resize(ms, 34));
+            fsm <= s_ema_step;
+
+          when s_ema_step =>
+
+            -- Rounded, shifted difference. The shift amounts are generics,
+            -- so this is one subtract-with-constant and a two-way mux.
+            diff := signed(resize(u_r, 34)) - signed(resize(ms, 34));
 
             if (fast = '1') then
-              step := shift_right(diff + to_signed(2 ** (ms_shift_fast - 1), 34), ms_shift_fast);
+              step_r <= shift_right(diff + to_signed(2 ** (ms_shift_fast - 1), 34), ms_shift_fast);
             else
-              step := shift_right(diff + to_signed(2 ** (ms_shift - 1), 34), ms_shift);
+              step_r <= shift_right(diff + to_signed(2 ** (ms_shift - 1), 34), ms_shift);
             end if;
 
-            ms_next := signed(resize(ms, 34)) + step;
+            fsm <= s_ema_ms;
+
+          when s_ema_ms =>
+
+            ms_next := signed(resize(ms, 34)) + step_r;
             ms_new  <= unsigned(std_logic_vector(ms_next(31 downto 0)));
-            thr     <= thr_of(unsigned(std_logic_vector(ms_next(31 downto 0))));
-            fsm     <= s_write;
+            fsm     <= s_thr;
+
+          when s_thr =>
+
+            -- Threshold from the updated estimate: one multiply.
+            thr <= thr_of(ms_new);
+            fsm <= s_write;
 
           when s_write =>
 
