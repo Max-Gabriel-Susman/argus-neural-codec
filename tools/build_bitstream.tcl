@@ -22,6 +22,24 @@ if {[get_bd_cells -quiet argus_acq_top_0] eq ""} {
   error "argus_acq_top_0 is not in the block design. Run tools/bd_add_acq.tcl first."
 }
 
+# -- 0a. Every RTL file in the project. The module reference is synthesised
+#        out of context from what is in sources_1; an entity added under
+#        rtl/ but never add_files'd is invisible to it and synthesis fails
+#        with "no such design unit". argus_feature.vhd was the first to hit
+#        this. Testbenches live in sim/ and are deliberately not globbed.
+set rtl_added 0
+foreach f [glob -nocomplain $repo/rtl/*.vhd] {
+  set f [file normalize $f]
+  if {[get_files -quiet -of_objects [get_filesets sources_1] $f] eq ""} {
+    puts "adding $f to sources_1"
+    add_files -norecurse -fileset sources_1 $f
+    set rtl_added 1
+  }
+}
+if {$rtl_added} {
+  update_compile_order -fileset sources_1
+}
+
 # -- 0b. Regenerate the module reference. It is synthesised out of context
 #        from a checkpoint under .gen/, and reset_run synth_1 below does not
 #        touch that run: RTL edits were being linked from a stale .dcp, and

@@ -7,25 +7,25 @@
 -- pass criterion is zero mismatches across every (bin, channel) for both
 -- count and power.
 --
--- INPUTS, both produced by argus_sim/tools/spike_features.py from the same
--- .bin with the same parameters as the DUT generics:
+-- INPUTS
 --
---   stim_file    one line per sweep, 96 integer ADC codes  (--stim)
---   golden_file  "bin ch count power" per line, '#' header (--golden)
+--   stim_file    the dataset_relay_node .bin itself: little-endian uint16,
+--                sample-major, 96 columns. The first n_sweeps rows are fed.
+--   golden_file  "bin ch count power" per line, '#' header -- what
+--                spike_features.py --golden wrote for the same .bin with
+--                the same parameters as the DUT generics.
 --
--- python3 spike_features.py indy_20161005_06_s120_10s.bin --mult 3.5 \
---     --golden feature_golden.txt --stim feature_stim.txt --stim-rows 48000
---
--- The golden is for the full file; this bench feeds the first n_sweeps rows
--- and checks bins 0 .. n_sweeps/bin_len - 1. Processing is causal, so those
--- bins are identical to a run on the prefix alone. 48000 sweeps is 32 bins,
--- ten of them after warm-up.
+-- The committed pair under sim/data/ is the CI-sized case (6000 sweeps,
+-- 2048-sweep warm-up, 100-sweep bins) and the Makefile passes its generics.
+-- The golden may be for a longer file: this bench checks bins
+-- 0 .. n_sweeps/bin_len - 1, and processing is causal, so those bins are
+-- identical to a run on the prefix alone.
 --
 -- DRIVE
 --   Each sweep is 32 amplifier slots then 3 aux slots with slot_last on the
 --   third, as the master emits them. Slots are slot_gap clocks apart rather
---   than the master's 119, to keep the run short; the block must be idle
---   when each slot arrives, and the bench checks that it is.
+--   than the master's 119, to keep the run short; the block needs 35 and
+--   must be idle when each slot arrives, and the bench checks that it is.
 --
 -- CHECK
 --   A checker process watches feature_index. Each time it advances, the
@@ -48,7 +48,7 @@ entity tb_argus_feature is
     stim_file   : string  := "feature_stim.txt";
     golden_file : string  := "feature_golden.txt";
     n_sweeps    : natural := 48000;
-    slot_gap    : natural := 36;
+    slot_gap    : natural := 40;
     -- DUT parameters; must match the golden's header
     b0            : integer := 31932;
     a1            : integer := 31096;
@@ -95,6 +95,8 @@ architecture sim of tb_argus_feature is
   signal stim_done : boolean := false;
   signal sim_done  : boolean := false;
   signal errors    : natural := 0;
+
+  type byte_file is file of character;
 
   -- Golden, bins 0 .. n_bins-1
 
@@ -198,10 +200,10 @@ begin
 
   stim : process is
 
-    file     f    : text;
+    file     f    : byte_file;
     variable st   : file_open_status;
-    variable l    : line;
-    variable v    : integer;
+    variable lo   : character;
+    variable hi   : character;
     variable row  : integer_vector(0 to channels - 1);
     variable sw   : natural := 0;
     variable word : std_logic_vector(15 downto 0);
@@ -225,12 +227,12 @@ begin
 
     while (sw < n_sweeps) and not endfile(f) loop
 
-      readline(f, l);
-
+      -- One row: 96 little-endian uint16.
       for c in 0 to channels - 1 loop
 
-        read(l, v);
-        row(c) := v;
+        read(f, lo);
+        read(f, hi);
+        row(c) := character'pos(lo) + 256 * character'pos(hi);
 
       end loop;
 
