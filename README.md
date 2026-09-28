@@ -14,6 +14,45 @@ The long term plan is to:
 - [ ] 2. Modify the Argus Cybernetics stack implementation to be a closed-loop
   interface (shape still undecided).
 
+## Register map (fabric revision ACQ3)
+
+`argus_acq_top` is an AXI4-Lite slave on `M_AXI_GP0` at `0x43C00000`, 4 KB.
+Byte offsets, 32-bit words; the header of `rtl/argus_acq_axi.vhd` is the
+authoritative copy. Unmapped addresses read `0xDEADBEEF` with an OKAY
+response (a SLVERR would data-abort the A9 during bring-up).
+
+| Offset | Name | Access | Contents |
+| --- | --- | --- | --- |
+| `0x000` | `CTRL` | RW | bit 0 `enable` start / park the SPI master; bit 1 `soft_reset` hold the chain in reset; bit 2 `ext_mode` chips serve BRAM replay samples instead of the built-in pattern; bit 3 `hold` freeze the frame read bank; bit 4 `feat_hold` freeze the feature bank |
+| `0x004` | `STATUS` | RO | bit 0 `ready` init sequence complete; bit 1 `overrun` assembler dropped a slot; bit 2 `held` frame freeze in effect and settled; bit 3 `feat_held` the same for the feature bank |
+| `0x008` | `FRAME_INDEX` | RO | sweep number of the frame in the read bank |
+| `0x00C` | `ID` | RO | `0x41435133`, "ACQ3". Read this first |
+| `0x010` | `REPLAY_STATUS` | RO | bit 0 `play_half`; bit 1 `consumed0`; bit 2 `consumed1`; bit 3 `underrun`; bits 23:8 `play_row` |
+| `0x014` | `REPLAY_ACK` | WO | write 1 to bit 0 / 1 / 2 to clear `consumed0` / `consumed1` / `underrun` |
+| `0x018` | `FEATURE_INDEX` | RO | feature bins completed; the bank holds the latest |
+| `0x01C` | `FEAT_DROPPED` | RO | bins lost to a `feat_hold` longer than one bin |
+| `0x100`–`0x27C` | `FRAME[0..95]` | RO | one 16-bit sample in the low half of each word |
+| `0x400`–`0x6FC` | `FEATURE[0..95]` | RO | two words per channel, channel *c* at `0x400 + 8c`: word 0 is `sum[31:0]`, word 1 is `count[15:0] & sum[47:32]` |
+
+`sum` is the channel's spike-band power for the bin, the 48-bit sum of the
+squared high-passed signal over 1500 sweeps (50 ms); `count` is its
+threshold crossings. Both match `argus_sim/tools/spike_features.py`
+bit-exact.
+
+**Reading a frame or a bin.** Set `CTRL.hold` (`CTRL.feat_hold`), poll
+`STATUS.held` (`STATUS.feat_held`), read the index and the words at any
+pace, clear the bit. The index is frozen with its bank, so it names what is
+actually being read. A GP0 read costs about 1.1 µs, so 96 frame words take
+~114 µs against a 33.3 µs sweep: a seqlock cannot work, which is why the
+hold is in hardware. Frames completing under hold are dropped; a feature
+bin completing under hold is deferred to the release, and only a hold
+longer than a whole bin loses one (`FEAT_DROPPED`).
+
+**Revisions.** `ID` changes whenever the firmware comes to depend on
+something new. ACQ1 is everything before hold/held; ACQ2 added `hold` /
+`held`; ACQ3 adds `argus_feature`, `CTRL` bit 4, `STATUS` bit 3,
+`FEATURE_INDEX`, `FEAT_DROPPED` and the `0x400` feature bank.
+
 ## Simulation
 
 Testbenches in `sim/` run under [GHDL](https://github.com/ghdl/ghdl) rather than
@@ -37,8 +76,37 @@ Make targets, all run from `sim/`:
 | `make synth` | Advisory `ghdl --synth` elaboration check |
 | `make clean` | Remove `sim/build/` |
 
-Waveforms land in `sim/build/<testbench>.ghw` and are uploaded as CI artifacts on
-every run.
+Every bench is its own target, so per-bench settings apply: `tb_argus_acq_top`
+runs to 120 ms to see its first feature bin, and `tb_argus_feature` runs to
+200 ms with no waveform (the feature block over 7.5 M clocks would be hundreds
+of MB of `.ghw`). The whole suite, seven benches, takes about five minutes.
+Waveforms for the others land in `sim/build/<testbench>.ghw` and are uploaded
+as CI artifacts on every run.
+
+### `sim/data/`: the bit-exact CI pair
+
+`tb_argus_feature` drives real cortex through `argus_feature` and checks every
+(bin, channel, count, power) against `spike_features.py`'s golden,
+bit-exact. `sim/data/` holds the CI-sized pair: `feature_ci.dat`, the first
+6000 sweeps of the Indy replay segment (1.2 MB of raw `uint16` codes), and
+`feature_ci_golden.txt`, the model's output for them: 60 bins × 96 channels,
+5760 pairs, at a 2048-sweep warm-up and 100-sweep bins so every arithmetic
+path runs in about three minutes. The samples are from O'Doherty et al.,
+doi:10.5281/zenodo.1419774, CC-BY-4.0; how the pair is regenerated is in
+`scripts/derive.sh` of the
+[argus_data](https://github.com/Max-Gabriel-Susman/argus_data) repository,
+and in the comment above `FEATURE_BIN` in `sim/Makefile`. Regenerate both
+after any change to the model's arithmetic.
+
+The bench takes its inputs as Make variables, so the production-parameter
+run (48000 sweeps, 1500-sweep bins, ~15 min) is a local check against the
+full segment:
+
+```bash
+make tb_argus_feature FEATURE_BIN=~/argus_data/indy_20161005_06_s120_10s.bin \
+    FEATURE_GOLDEN=~/argus_data/indy_20161005_06_s120_10s.golden.txt \
+    FEATURE_GENERICS= STOP_TIME=600ms
+```
 
 ## Linting
 
@@ -127,7 +195,14 @@ ls -l --time-style=long-iso $(find . -name 'neural_codec_wrapper.bit' | head -1)
 A fabric version register checked at boot would turn this into a first-line
 failure; the `ID` register is the place for it.
 
-### What `build_bitstream.tcl` gates
+### What `build_bitstream.tcl` does and gates
+
+`build_bitstream.tcl` is the only way a bitstream is made. Before building it
+adds any `rtl/*.vhd` missing from `sources_1` (the module reference is
+synthesised from `sources_1`, and an entity that was never added is invisible
+to it: `argus_feature.vhd` was the first to hit this) and regenerates the
+module reference so RTL edits are not linked from a stale checkpoint. Then
+it runs synthesis, implementation and bitstream, and exports the XSA only if:
 
 1. `argus_acq_top_0` is in the block design. Without it the build is
    PS7-only: implements clean, does nothing.
