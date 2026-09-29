@@ -3,13 +3,18 @@
 The Argus Neural Codec contains the gateware configuration for neural coding and
 decoding within the Argus Cybernetics stack. Access to that gateware is mediated
 by the Argus Safety Controller, which exposes it to the rest of the ROS graph.
+The whole stack, and the one command that runs it on the board, is described in
+[argus_bringup/README.md](https://github.com/Max-Gabriel-Susman/argus_bringup/blob/main/README.md).
+Build and test this repo with `cd sim && make` (seven GHDL benches, about five
+minutes).
 
 The long term plan is to:
 
-- [ ] 1. Migrate the current neural decoding logic from the Argus Safety
+- [x] 1. Migrate the current neural decoding logic from the Argus Safety
   Controller to the gateware in this repo while providing safe access to the
   gateware for the rest of the Argus Cybernetics stack's ROS graph. This targets
-  the Arty Z7's PL.
+  the Arty Z7's PL. Done at fabric revision ACQ3: `argus_feature` computes
+  crossings and spike-band power in the PL, and the firmware ships them.
 
 - [ ] 2. Modify the Argus Cybernetics stack implementation to be a closed-loop
   interface (shape still undecided).
@@ -37,7 +42,8 @@ response (a SLVERR would data-abort the A9 during bring-up).
 `sum` is the channel's spike-band power for the bin, the 48-bit sum of the
 squared high-passed signal over 1500 sweeps (50 ms); `count` is its
 threshold crossings. Both match `argus_sim/tools/spike_features.py`
-bit-exact.
+bit-exact, in simulation and on silicon (`argus_sim/tools/hw_bitexact.py`:
+139200/139200 counts and powers over 1450 bins of a 90 s board run).
 
 **Reading a frame or a bin.** Set `CTRL.hold` (`CTRL.feat_hold`), poll
 `STATUS.held` (`STATUS.feat_held`), read the index and the words at any
@@ -192,8 +198,9 @@ git log -1 --format='%cd  %s' -- rtl/argus_acq_axi.vhd
 ls -l --time-style=long-iso $(find . -name 'neural_codec_wrapper.bit' | head -1)
 ```
 
-A fabric version register checked at boot would turn this into a first-line
-failure; the `ID` register is the place for it.
+The firmware now reads `ID` at boot and prints `acq id=... EXPECTED ...
+-- stale bitstream?` on a mismatch, which `hwtest.sh` fails on. That catches a
+missed revision bump, not a changed bit inside one revision.
 
 ### What `build_bitstream.tcl` does and gates
 
@@ -227,7 +234,9 @@ console.
    is ticked and the bitstream field points at the new
    `neural_codec_wrapper.bit`. The PL must be configured before the first
    AXI access or the A9 hangs with no timeout
-4. Relay up, serial console open, then Run — in that order
+4. Relay up, serial console open, then Run — in that order. Today
+   `argus_bringup/scripts/hwtest.sh` (or `argus.launch.py program:=true`)
+   does this: it starts the relay and console, then programs the board.
 
 ### Checking a module before it goes in
 
