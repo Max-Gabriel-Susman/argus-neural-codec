@@ -1,254 +1,221 @@
-# Argus Neural Codec
+# argus-neural-codec
 
-The Argus Neural Codec contains the gateware configuration for neural coding and
-decoding within the Argus Cybernetics stack. Access to that gateware is mediated
-by the Argus Safety Controller, which exposes it to the rest of the ROS graph.
-The whole stack, and the one command that runs it on the board, is described in
-[argus_bringup/README.md](https://github.com/Max-Gabriel-Susman/argus_bringup/blob/main/README.md).
-Build and test this repo with `cd sim && make` (seven GHDL benches, about five
-minutes).
+The programmable-logic half of [Argus Cybernetics](https://github.com/Max-Gabriel-Susman/argus_bringup):
+a 96-channel neural acquisition chain and a spike-feature codec in the
+fabric of a Zynq XC7Z020 (Arty Z7-20), behind one AXI4-Lite register block.
+Three simulated Intan RHD2132 chips are read over real SPI at 30,012
+sweeps per second; a frame assembler keeps the latest raw frame; the codec
+computes, per channel and per 50 ms bin, the number of threshold crossings
+and the spike-band power. The firmware in
+[argus_safety_controller](https://github.com/Max-Gabriel-Susman/argus_safety_controller)
+reads both over AXI and puts them on the wire.
 
-The long term plan is to:
+The codec is bit-exact against its Python model
+(`argus_sim/tools/spike_features.py`): 5,760 (bin, channel) pairs in
+simulation, 139,200 on silicon through the whole wire and ROS path.
+Post-route timing at 125 MHz: WNS 0.924 ns, WHS 0.036 ns.
 
-- [x] 1. Migrate the current neural decoding logic from the Argus Safety
-  Controller to the gateware in this repo while providing safe access to the
-  gateware for the rest of the Argus Cybernetics stack's ROS graph. This targets
-  the Arty Z7's PL. Done at fabric revision ACQ3: `argus_feature` computes
-  crossings and spike-band power in the PL, and the firmware ships them.
+## What is in the fabric
 
-- [ ] 2. Modify the Argus Cybernetics stack implementation to be a closed-loop
-  interface (shape still undecided).
+```
+                 ┌──────────────────────────────────────────────────────────────┐
+  BRAM (PS-filled, ping-pong halves)                                             │
+       │                                                                        │
+       ▼                                                                        │
+  argus_sample_fetch ──ext mode──► argus_rhd2132_model ×3 ──MISO──┐              │
+                                   (identity pattern otherwise)   │              │
+                                                                  ▼              │
+                                                       argus_rhd_spi_master      │
+                                                       35 slots/sweep, 119 clk   │
+                                                                  │ slot stream  │
+                                          ┌───────────────────────┴────────────┐ │
+                                          ▼                                    ▼ │
+                              argus_frame_assembler                  argus_feature
+                              latest raw frame, held                 the codec, held
+                                          │                                    │
+                                          └────────► argus_acq_axi ◄───────────┘
+                                                     ACQ3 register block ──► M_AXI_GP0
+```
 
-## Register map (fabric revision ACQ3)
+| file | role | numbers |
+| --- | --- | --- |
+| `rtl/argus_rhd2132_model.vhd` | RHD2132 chip model: register-accurate SPI behaviour, the ADC pipeline delay, a per-channel identity pattern, or samples from the fetcher in ext mode | 32 channels, 16-bit |
+| `rtl/argus_rhd_spi_master.vhd` | The SPI master the real headstage would see: 32 amplifier slots and 3 aux slots per sweep, three chips on parallel MISO lanes | 119 clocks per slot, 30,012 sweeps/s at 125 MHz |
+| `rtl/argus_sample_fetch.vhd` | Ext-mode source: plays samples out of two BRAM halves the PS refills; reports each half consumed and any underrun | 147 samples per half, 4.9 ms |
+| `rtl/argus_frame_assembler.vhd` | The latest complete raw frame, double-buffered; `hold` freezes the read bank so 96 AXI reads see one sweep | `FRAME_INDEX` = sweep number |
+| `rtl/argus_feature.vhd` | The codec (below) | 35 clocks per slot; one time-multiplexed datapath, three DSP48s |
+| `rtl/argus_acq_axi.vhd` | AXI4-Lite register block, revision ACQ3 | 4 KB, ID `0x41435133` |
+| `rtl/argus_acq_top.vhd` | The chain, instantiated in the block design as a module reference | ports: `s_axi_*`, `bram_*` |
 
-`argus_acq_top` is an AXI4-Lite slave on `M_AXI_GP0` at `0x43C00000`, 4 KB.
-Byte offsets, 32-bit words; the header of `rtl/argus_acq_axi.vhd` is the
-authoritative copy. Unmapped addresses read `0xDEADBEEF` with an OKAY
-response (a SLVERR would data-abort the A9 during bring-up).
+The block design (`neural_codec`) is the Zynq PS, an AXI interconnect, the
+module reference, and `axi_bram_ctrl` + `blk_mem_gen` at `0x40000000` for
+the replay halves. The register block is at `0x43C00000`.
 
-| Offset | Name | Access | Contents |
+## The codec
+
+Each channel's sample `code` (16-bit ADC) goes through, in fixed point:
+
+```
+x   = code − 32768
+y   = (B0·(x − x₁) + A1·y₁ + 2¹⁴) >> 15          first-order high-pass, Q1.15, rounded
+sq  = y²
+u   = min(sq, T_prev)  once tracking                winsorised input
+ms  = ms + ((u − ms + 2^(k−1)) >> k)               mean-square EMA, k = 8 until warm, then 15
+T   = (ms · 49) >> 2                               threshold = 3.5σ → 12.25 × mean-square
+cross when  sq > T  and  y < 0  and  not in refractory  and  after warm-up
+count += cross ;  power += sq                      per 50 ms bin (1,500 sweeps)
+```
+
+The rounding terms are not decoration: floor in the recursion biased the
+filter by −10 codes and turned 4.5σ into 3.5σ. Both were caught by the
+model's synthetic tests before the RTL existed.
+
+| generic | value | meaning |
+| --- | --- | --- |
+| `B0`, `A1` | 31932, 31096 | 250 Hz high-pass at 30,012 Hz, Q1.15 |
+| `MULT_NUM`, `MULT_SHIFT` | 49, 2 | threshold multiplier 12.25 = (3.5σ)² |
+| `K`, `K_FAST` | 15, 8 | EMA shifts: 1.09 s tracking, 8.5 ms fast attack |
+| `REFRAC` | 30 | refractory, sweeps (1 ms) |
+| `WARMUP` | 32768 | sweeps before counting (1.09 s) |
+| `BIN` | 1500 | sweeps per bin (50 ms) |
+| `WINSOR` | 1 | clamp the EMA input at the threshold once tracking |
+
+These are the values locked by decode accuracy on the Indy session
+(`argus_sim/tools/decode_test.py`: counts + power at 3.5σ decode intent at
+53.5 % against 49.9 % for the lab's spike-sorted units). Agreement with the
+spike sorter was rejected as the metric early on; decode accuracy answers
+the actual question.
+
+Structure: one datapath serves all 96 channels from the slot stream, eleven
+single-operation states per chip (the first draft did the EMA update and the
+threshold multiply in one clock and missed 125 MHz by 2.3 ns). Per-channel
+state lives in a 96 × 136-bit RAM — `x₁`, `y₁`, `ms`, the crossing latch,
+the refractory counter, the running count and the 48-bit power sum — which
+Vivado infers as distributed RAM. Completed bins move to a double-buffered
+feature bank with the same `hold`/`held` handshake as the frame; a bin that
+completes under a hold is deferred to the release, and `dropped` counts
+the rare case of two.
+
+## Register map (ACQ3)
+
+| offset | name | | |
 | --- | --- | --- | --- |
-| `0x000` | `CTRL` | RW | bit 0 `enable` start / park the SPI master; bit 1 `soft_reset` hold the chain in reset; bit 2 `ext_mode` chips serve BRAM replay samples instead of the built-in pattern; bit 3 `hold` freeze the frame read bank; bit 4 `feat_hold` freeze the feature bank |
-| `0x004` | `STATUS` | RO | bit 0 `ready` init sequence complete; bit 1 `overrun` assembler dropped a slot; bit 2 `held` frame freeze in effect and settled; bit 3 `feat_held` the same for the feature bank |
+| `0x000` | `CTRL` | RW | bit 0 enable · 1 soft reset · 2 ext mode · 3 hold (frame) · 4 feat_hold |
+| `0x004` | `STATUS` | RO | bit 0 ready · 1 overrun · 2 held · 3 feat_held |
 | `0x008` | `FRAME_INDEX` | RO | sweep number of the frame in the read bank |
-| `0x00C` | `ID` | RO | `0x41435133`, "ACQ3". Read this first |
-| `0x010` | `REPLAY_STATUS` | RO | bit 0 `play_half`; bit 1 `consumed0`; bit 2 `consumed1`; bit 3 `underrun`; bits 23:8 `play_row` |
-| `0x014` | `REPLAY_ACK` | WO | write 1 to bit 0 / 1 / 2 to clear `consumed0` / `consumed1` / `underrun` |
-| `0x018` | `FEATURE_INDEX` | RO | feature bins completed; the bank holds the latest |
-| `0x01C` | `FEAT_DROPPED` | RO | bins lost to a `feat_hold` longer than one bin |
+| `0x00C` | `ID` | RO | `0x41435133` "ACQ3" — the firmware checks this first |
+| `0x010` | `REPLAY_STATUS` | RO | play half, consumed flags, underrun, row |
+| `0x014` | `REPLAY_ACK` | WO | clear consumed 0/1, clear underrun |
+| `0x018` | `FEATURE_INDEX` | RO | bins completed; the bank holds the latest |
+| `0x01C` | `FEAT_DROPPED` | RO | bins lost to a hold longer than one bin |
 | `0x100`–`0x27C` | `FRAME[0..95]` | RO | one 16-bit sample in the low half of each word |
-| `0x400`–`0x6FC` | `FEATURE[0..95]` | RO | two words per channel, channel *c* at `0x400 + 8c`: word 0 is `sum[31:0]`, word 1 is `count[15:0] & sum[47:32]` |
+| `0x400`–`0x6FC` | `FEATURE[0..95]` | RO | two words per channel: `sum[31:0]`, then `count[15:0]` over `sum[47:32]` |
 
-`sum` is the channel's spike-band power for the bin, the 48-bit sum of the
-squared high-passed signal over 1500 sweeps (50 ms); `count` is its
-threshold crossings. Both match `argus_sim/tools/spike_features.py`
-bit-exact, in simulation and on silicon (`argus_sim/tools/hw_bitexact.py`:
-139200/139200 counts and powers over 1450 bins of a 90 s board run).
+Reads of `FRAME` and `FEATURE` go through a registered RAM port (two-cycle
+read). To read coherently: set the hold bit, poll the held bit, read, clear
+the hold. Unmapped addresses read `0xDEADBEEF`.
 
-**Reading a frame or a bin.** Set `CTRL.hold` (`CTRL.feat_hold`), poll
-`STATUS.held` (`STATUS.feat_held`), read the index and the words at any
-pace, clear the bit. The index is frozen with its bank, so it names what is
-actually being read. A GP0 read costs about 1.1 µs, so 96 frame words take
-~114 µs against a 33.3 µs sweep: a seqlock cannot work, which is why the
-hold is in hardware. Frames completing under hold are dropped; a feature
-bin completing under hold is deferred to the release, and only a hold
-longer than a whole bin loses one (`FEAT_DROPPED`).
+The revision in `ID` is bumped whenever the map or the fabric's behaviour
+changes, and the firmware refuses to run against a revision it does not
+know: `acq id=… EXPECTED … -- stale bitstream?` at boot means the platform
+was not rebuilt after a gateware change. ACQ1 was the original chain, ACQ2
+added the held frame read, ACQ3 the feature bank.
 
-**Revisions.** `ID` changes whenever the firmware comes to depend on
-something new. ACQ1 is everything before hold/held; ACQ2 added `hold` /
-`held`; ACQ3 adds `argus_feature`, `CTRL` bit 4, `STATUS` bit 3,
-`FEATURE_INDEX`, `FEAT_DROPPED` and the `0x400` feature bank.
+## Building
 
-## Simulation
-
-Testbenches in `sim/` run under [GHDL](https://github.com/ghdl/ghdl) rather than
-XSim as Vivado can't run on a hosted CI runner, and the RHD2132 model and its
-testbench are plain VHDL with no Xilinx primitives, so they don't need it. GHDL
-covers `rtl/` and `sim/` only; the `neural_codec` block design and the PS7
-instance are still validated on the workstation.
+Headless, from the repository root, with Vivado 2026.1 on the path:
 
 ```bash
-sudo apt-get install -y ghdl
-cd sim && make
+vivado -mode batch -source tools/build_bitstream.tcl argus_neural_codec.xpr
 ```
 
-Make targets, all run from `sim/`:
+The script adds any `rtl/*.vhd` the project does not yet have, refreshes the
+module reference (its out-of-context checkpoint goes stale otherwise, and
+`reset_run synth_1` does not touch it), resets and runs synthesis through
+`write_bitstream`, and then reports post-route slack and refuses to export
+if either is negative. On success it writes `argus_neural_codec.xsa` with
+the bitstream included and utilisation and timing reports under
+`/tmp/argus_build/`. About three minutes.
 
-| Target | Effect |
+The firmware's `tools/build_firmware.sh` consumes that XSA; the bringup
+harness (`scripts/hwtest.sh --fabric --firmware`) runs both and then tests
+the result on the board.
+
+A change to `argus_acq_top`'s ports (not its internals) is the one thing
+`update_module_reference` cannot do; the module has to be removed from the
+block design and re-added, as `tools/bd_add_bram.tcl` does. Internal
+changes, including new entities, need only the build script.
+
+## Simulating
+
+```bash
+cd sim && make            # all seven benches, about five minutes
+make tb_argus_feature     # one bench
+make synth                # ghdl --synth of argus_acq_top: catches non-synthesisable VHDL early
+```
+
+| bench | proves |
 | --- | --- |
-| `make` / `make run` | Analyze `rtl/` + `sim/`, then run every `tb_*.vhd` |
-| `make analyze` | Analysis only |
-| `make tb_<name>` | Run one testbench by name |
-| `make synth` | Advisory `ghdl --synth` elaboration check |
-| `make clean` | Remove `sim/build/` |
+| `tb_argus_rhd2132_model` | the chip model's pipeline depth and channel identity |
+| `tb_argus_rhd_spi_master` | the slot pipeline, three lanes, sweep coherence, aux slots, SCLK timing |
+| `tb_argus_sample_fetch` | lane addressing, row advance, consumed/ack, underrun |
+| `tb_argus_frame_assembler` | electrode mapping, double buffering, frame indexing |
+| `tb_argus_frame_assembler_hold` | the freeze, index freeze, a slow coherent read, release |
+| `tb_argus_feature` | **bit-exactness**: real samples in, every (bin, channel, count, power) against the model's golden |
+| `tb_argus_acq_top` | the whole chain through AXI: address map, enable, sweep rate, held frame read, the feature bank, soft reset |
 
-Every bench is its own target, so per-bench settings apply: `tb_argus_acq_top`
-runs to 120 ms to see its first feature bin, and `tb_argus_feature` runs to
-200 ms with no waveform (the feature block over 7.5 M clocks would be hundreds
-of MB of `.ghw`). The whole suite, seven benches, takes about five minutes.
-Waveforms for the others land in `sim/build/<testbench>.ghw` and are uploaded
-as CI artifacts on every run.
-
-### `sim/data/`: the bit-exact CI pair
-
-`tb_argus_feature` drives real cortex through `argus_feature` and checks every
-(bin, channel, count, power) against `spike_features.py`'s golden,
-bit-exact. `sim/data/` holds the CI-sized pair: `feature_ci.dat`, the first
-6000 sweeps of the Indy replay segment (1.2 MB of raw `uint16` codes), and
-`feature_ci_golden.txt`, the model's output for them: 60 bins × 96 channels,
-5760 pairs, at a 2048-sweep warm-up and 100-sweep bins so every arithmetic
-path runs in about three minutes. The samples are from O'Doherty et al.,
-doi:10.5281/zenodo.1419774, CC-BY-4.0; how the pair is regenerated is in
-`scripts/derive.sh` of the
-[argus_data](https://github.com/Max-Gabriel-Susman/argus_data) repository,
-and in the comment above `FEATURE_BIN` in `sim/Makefile`. Regenerate both
-after any change to the model's arithmetic.
-
-The bench takes its inputs as Make variables, so the production-parameter
-run (48000 sweeps, 1500-sweep bins, ~15 min) is a local check against the
-full segment:
+`tb_argus_feature` reads a replay `.bin` directly and a golden file the
+model wrote for it. The committed pair under `sim/data/` is the CI case —
+the first 6,000 rows of the Indy segment at reduced parameters (`ms_shift`
+11, `warmup` 2048, `bin` 100) so every arithmetic path runs in about three
+minutes. To regenerate it after a change to the model's arithmetic:
 
 ```bash
-make tb_argus_feature FEATURE_BIN=~/argus_data/indy_20161005_06_s120_10s.bin \
-    FEATURE_GOLDEN=~/argus_data/indy_20161005_06_s120_10s.golden.txt \
-    FEATURE_GENERICS= STOP_TIME=600ms
+head -c $((6000*96*2)) ~/argus_data/indy_20161005_06_s120_10s.bin > sim/data/feature_ci.dat
+python3 <argus_ws>/src/argus_sim/tools/spike_features.py sim/data/feature_ci.dat \
+    --mult 3.5 --ms-shift 11 --warmup 2048 --bin 100 --golden sim/data/feature_ci_golden.txt
 ```
 
-## Linting
+The production-parameter run (48,000 sweeps, about fifteen minutes in
+GHDL) is a local check: `make tb_argus_feature FEATURE_BIN=… FEATURE_GOLDEN=…
+FEATURE_GENERICS= STOP_TIME=600ms`, with a golden made at `--mult 3.5` and
+defaults otherwise.
 
-VHDL style is enforced by [VSG](https://github.com/jeremiah-c-leary/vhdl-style-guide)
-(VHDL Style Guide), a Python linter and auto-formatter.
+Every file is VSG-clean: `vsg --fix -c vsg.yaml -f rtl/X.vhd` for RTL,
+`vsg --fix -c vsg.yaml sim/vsg_tb.yaml -f sim/tb_X.vhd` for benches. CI
+runs the linter, all seven benches, and the synthesis check on every push.
 
-Install it isolated from the ROS 2 system Python:
+## What it has been checked against
 
-```bash
-pipx install vsg
-```
+- The model, in GHDL: 5,760 pairs at reduced parameters, and the full
+  48,000-sweep run at production parameters, both exact.
+- The model, on silicon: `argus_sim/tools/hw_bitexact.py` captures the
+  frames the firmware sends and compares them to the model run on the same
+  samples — 139,200 / 139,200 over 72.5 s, counts and `sum / 1500` power.
+- The board, every change: the bringup harness programs it and judges a
+  live run before a hardware-affecting commit lands.
 
-Check and fix:
+## Data
 
-```bash
-vsg -f rtl/*.vhd sim/*.vhd
-vsg -f rtl/*.vhd sim/*.vhd --fix
-```
+The samples in `sim/data/` and in the replay files are from O'Doherty,
+Cardoso, Makin & Sabes, session `indy_20161005_06`
+([10.5281/zenodo.1419774](https://doi.org/10.5281/zenodo.1419774)),
+CC-BY-4.0, converted to RHD2132 codes at 30,012 Hz by
+`argus_sim/tools/nwb_to_replay.py`. No other data live in this repository.
 
-## CI
+## Relationship to the rest of the stack
 
-`.github/workflows/ci.yml` runs four jobs on push and PR to `main`:
+This repository is the fabric only. The wire contract is in
+[argus_core](https://github.com/Max-Gabriel-Susman/argus_core); the
+firmware that reads these registers is in
+[argus_safety_controller](https://github.com/Max-Gabriel-Susman/argus_safety_controller);
+the model, the datasets and the validation tools are in
+[argus_sim](https://github.com/Max-Gabriel-Susman/argus_sim) and
+[argus_data](https://github.com/Max-Gabriel-Susman/argus_data); the launch
+and the hardware harness are in
+[argus_bringup](https://github.com/Max-Gabriel-Susman/argus_bringup), whose
+README is the overview of the whole system.
 
-| Job | Gate | What it does |
-| --- | --- | --- |
-| `simulate` | blocking | GHDL analyze/elaborate/run over every testbench; uploads waveforms |
-| `hygiene` | blocking | Rejects CRLF endings and tracked Vivado transient output |
-| `lint` | advisory | VSG over all tracked `.vhd` outside the Vivado project tree |
-| `synth-check` | advisory | `ghdl --synth` elaboration of `argus_rhd2132_model` |
+## License
 
-## Building the bitstream
-
-The Vivado project is driven from Tcl. The GUI is for reviewing the diagram
-and reading reports; every change to what gets built goes through a script
-in `tools/`, so the build is reproducible and the address map survives
-regeneration.
-
-Scripts are sourced from the Vivado Tcl console with the project open. Use
-absolute paths — Vivado's working directory is rarely the repo root, and a
-`source` that finds nothing prints nothing:
-
-```tcl
-source /home/prometheus/Documents/argus-neural-codec/tools/build_bitstream.tcl
-```
-
-Expect a wall of echoed commands. Silence means a wrong path or an empty file.
-
-### The scripts
-
-| Script | Does | Run when |
-| --- | --- | --- |
-| `tools/build_bitstream.tcl` | Synthesis → implementation → bitstream → XSA export, gated on timing and a non-empty PL | Every time the fabric changes |
-| `tools/bd_add_acq.tcl` | Adds `argus_acq_top` to the block design as a module reference on `M_AXI_GP0`, pinned at `0x43C00000` / 4 KB | Once, on a block design without it. Idempotent |
-| `tools/bd_add_bram.tcl` | Adds the replay BRAM: AXI BRAM Controller at `0x40000000` / 64 KB, true-dual-port BMG, port B wired to `argus_acq_top`. Force-re-elaborates the module first | Once, after `bd_add_acq.tcl`. Also the template for any port-list change |
-| `tools/ooc_synth_check.tcl` | Out-of-context synthesis of one module against 125 MHz; no project needed | Before a new module goes into the block design |
-
-`neural_codec_bd.tcl` at the repo root is written by the `bd_add_*` scripts
-(`write_bd_tcl -force`) and is the source of truth for the block design. It
-contains the module reference, so `rtl/` must be in the project before it
-can be sourced. Recreating the project from it on a fresh clone: TODO.
-
-### What changed → what to run
-
-| Change | Run |
-| --- | --- |
-| RTL internals — logic, a new register bit — with `argus_acq_top`'s port list unchanged | `build_bitstream.tcl` only. Synthesis reads `rtl/` directly and `reset_run` prevents a stale netlist being reused |
-| `argus_acq_top`'s entity — ports added, removed, renamed, retyped | The re-elaboration steps from `bd_add_bram.tcl` (delete the cell, remove and re-add the source, recreate the cell, restore `S_AXI` and the address), then `build_bitstream.tcl`. `update_module_reference` does not work: it compares against a cached elaboration and returns silently |
-| Block design — new IP, an address, a clock | Edit or extend the relevant `bd_add_*.tcl`, source it, then `build_bitstream.tcl` |
-| Firmware only | Nothing here. Rebuild in Vitis |
-
-If a first-row change builds clean but the feature still does nothing on
-hardware, fall through to the second row.
-
-**The failure that bites:** firmware depending on a new register bit, built
-and run without a new bitstream. The old fabric ignores the bit silently.
-`acq id` and `frames/s` still pass because they predate the change, so the
-symptom reads like an RTL bug. Check the bitstream against the commit before
-suspecting the RTL:
-
-```bash
-cd ~/Documents/argus-neural-codec
-git log -1 --format='%cd  %s' -- rtl/argus_acq_axi.vhd
-ls -l --time-style=long-iso $(find . -name 'neural_codec_wrapper.bit' | head -1)
-```
-
-The firmware now reads `ID` at boot and prints `acq id=... EXPECTED ...
--- stale bitstream?` on a mismatch, which `hwtest.sh` fails on. That catches a
-missed revision bump, not a changed bit inside one revision.
-
-### What `build_bitstream.tcl` does and gates
-
-`build_bitstream.tcl` is the only way a bitstream is made. Before building it
-adds any `rtl/*.vhd` missing from `sources_1` (the module reference is
-synthesised from `sources_1`, and an entity that was never added is invisible
-to it: `argus_feature.vhd` was the first to hit this) and regenerates the
-module reference so RTL edits are not linked from a stale checkpoint. Then
-it runs synthesis, implementation and bitstream, and exports the XSA only if:
-
-1. `argus_acq_top_0` is in the block design. Without it the build is
-   PS7-only: implements clean, does nothing.
-2. `impl_1` reached 100 %.
-3. The implemented design has timed paths. None means an empty PL.
-4. Post-route WNS and WHS are both ≥ 0. Negative slack means no export.
-
-Reports: `/tmp/argus_build/timing.rpt` and `utilization.rpt`. Export:
-`argus_neural_codec.xsa` at the repo root with the bitstream embedded, at a
-fixed name so Vitis finds it without re-browsing.
-
-About two minutes on this design: ~30 s synthesis, ~75 s implementation.
-
-### Handoff to Vitis
-
-The script prints these on success; they're here so they survive a closed
-console.
-
-1. `arty_z7_platform` → Settings → `vitis-comp.json` → **Switch / re-read XSA**
-2. Build the platform, then `safety_controller`
-3. `safety_controller` → `_ide` → `launch.json`: confirm **Program Device**
-   is ticked and the bitstream field points at the new
-   `neural_codec_wrapper.bit`. The PL must be configured before the first
-   AXI access or the A9 hangs with no timeout
-4. Relay up, serial console open, then Run — in that order. Today
-   `argus_bringup/scripts/hwtest.sh` (or `argus.launch.py program:=true`)
-   does this: it starts the relay and console, then programs the board.
-
-### Checking a module before it goes in
-
-`ooc_synth_check.tcl` runs from the shell, from the repo root, with no
-project:
-
-```bash
-cd ~/Documents/argus-neural-codec
-xilinx
-vivado -mode batch -nojournal -nolog -source tools/ooc_synth_check.tcl -tclargs argus_acq_top
-```
-
-Post-synthesis WNS against an 8 ns clock, applied after synthesis, so the
-number is pessimistic — the right direction for a go/no-go. Reports in
-`/tmp/argus_ooc/<module>.timing.rpt` and `.util.rpt`.
+Apache-2.0.
