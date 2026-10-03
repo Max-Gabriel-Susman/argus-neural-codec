@@ -49,11 +49,11 @@ entity argus_rhd2132_model is
     miso_oe : out   std_logic; -- '1' when the model is driving the line
 
     -- External sample source. See header.
-    ext_mode : in    std_logic := '0';
+    ext_mode : in    std_logic                     := '0';
     ext_req  : out   std_logic;
     ext_ch   : out   unsigned(5 downto 0);
     ext_data : in    std_logic_vector(15 downto 0) := (others => '0');
-    ext_ack  : in    std_logic := '0';
+    ext_ack  : in    std_logic                     := '0';
 
     dbg_last_cmd  : out   std_logic_vector(15 downto 0);
     dbg_cmd_valid : out   std_logic;
@@ -325,7 +325,7 @@ begin
             if ((shift_in(15 downto 14) = op_write)
                 and is_ram_register(shift_in(13 downto 8))) then
               regfile(to_integer(unsigned(shift_in(13 downto 8))))
-                <= shift_in(7 downto 0);
+ <= shift_in(7 downto 0);
             end if;
 
             if (shift_in = cmd_calibrate) then

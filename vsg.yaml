@@ -1,4 +1,6 @@
 ---
 rule:
+  port_012:
+    disable: true
   instantiation_034:
     method: 'entity'

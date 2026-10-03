@@ -108,7 +108,6 @@ architecture rtl of argus_sample_fetch is
   signal addr_r : unsigned(31 downto 0);
   signal idx    : unsigned(15 downto 0);
 
-
 begin
 
   assert chip_count <= 16
@@ -175,7 +174,6 @@ begin
             addr_r <= resize(idx(15 downto 1) & "00", 32);
 
             if (hold_cnt = 0) then
-
               if (idx(0) = '0') then
                 data_r(lane * 16 + 15 downto lane * 16) <= bram_dout(15 downto 0);
               else
