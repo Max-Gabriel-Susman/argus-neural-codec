@@ -50,11 +50,11 @@ architecture sim of tb_argus_frame_assembler_hold is
   signal clk   : std_logic := '0';
   signal rst_n : std_logic := '0';
 
-  signal slot_valid   : std_logic := '0';
-  signal slot_channel : unsigned(5 downto 0) := (others => '0');
+  signal slot_valid   : std_logic                                      := '0';
+  signal slot_channel : unsigned(5 downto 0)                           := (others => '0');
   signal slot_data    : std_logic_vector(chip_count * 16 - 1 downto 0) := (others => '0');
-  signal slot_is_aux  : std_logic := '0';
-  signal slot_last    : std_logic := '0';
+  signal slot_is_aux  : std_logic                                      := '0';
+  signal slot_last    : std_logic                                      := '0';
 
   signal frame_valid : std_logic;
   signal frame_index : unsigned(31 downto 0);
@@ -62,7 +62,7 @@ architecture sim of tb_argus_frame_assembler_hold is
   signal hold : std_logic := '0';
   signal held : std_logic;
 
-  signal rd_en   : std_logic := '0';
+  signal rd_en   : std_logic            := '0';
   signal rd_addr : unsigned(7 downto 0) := (others => '0');
   signal rd_data : std_logic_vector(15 downto 0);
 
@@ -100,7 +100,9 @@ architecture sim of tb_argus_frame_assembler_hold is
   begin
 
     for i in 0 to 3 loop
+
       r(4 - i) := digits(to_integer(unsigned(v(i * 4 + 3 downto i * 4))) + 1);
+
     end loop;
 
     return r;
@@ -109,7 +111,8 @@ architecture sim of tb_argus_frame_assembler_hold is
 
 begin
 
-  clk <= not clk after clk_period / 2 when not sim_done else '0';
+  clk <= not clk after clk_period / 2 when not sim_done else
+         '0';
 
   dut : entity work.argus_frame_assembler(rtl)
     generic map (
@@ -153,7 +156,9 @@ begin
       for ch in 0 to ch_per_chip - 1 loop
 
         for c in 0 to chip_count - 1 loop
+
           d(c * 16 + 15 downto c * 16) := ident_word(c, ch, idx);
+
         end loop;
 
         slot_channel <= to_unsigned(ch, 6);
@@ -166,7 +171,9 @@ begin
         slot_last    <= '0';
 
         for k in 0 to slot_gap - 1 loop
+
           wait until rising_edge(clk);
+
         end loop;
 
       end loop;
@@ -218,7 +225,9 @@ begin
       target := sweeps + n;
 
       while sweeps < target loop
+
         wait until rising_edge(clk);
+
       end loop;
 
     end procedure wait_sweeps;
@@ -288,7 +297,9 @@ begin
       end if;
 
       for k in 0 to 49 loop
+
         wait until rising_edge(clk);
+
       end loop;
 
     end loop;
@@ -321,7 +332,7 @@ begin
         severity error;
     end if;
 
-    mark := sweeps;
+    mark     := sweeps;
     wait_sweeps(3);
     fi_after := frame_index;
 

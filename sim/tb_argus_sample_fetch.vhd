@@ -93,21 +93,23 @@ architecture sim of tb_argus_sample_fetch is
   signal half_consumed  : std_logic_vector(1 downto 0);
   signal underrun       : std_logic;
   signal ack_consumed   : std_logic_vector(1 downto 0) := (others => '0');
-  signal clear_underrun : std_logic := '0';
+  signal clear_underrun : std_logic                    := '0';
 
   signal frame_valid : std_logic;
   signal frame_index : unsigned(31 downto 0);
   -- Never raised here; the freeze has its own testbench.
-  signal hold        : std_logic            := '0';
-  signal held        : std_logic;
-  signal rd_en       : std_logic            := '0';
-  signal rd_addr     : unsigned(7 downto 0) := (others => '0');
-  signal rd_data     : std_logic_vector(15 downto 0);
-  signal overrun     : std_logic;
+  signal hold    : std_logic            := '0';
+  signal held    : std_logic;
+  signal rd_en   : std_logic            := '0';
+  signal rd_addr : unsigned(7 downto 0) := (others => '0');
+  signal rd_data : std_logic_vector(15 downto 0);
+  signal overrun : std_logic;
 
   signal sim_done : boolean := false;
 
-  function hex4 (v : std_logic_vector(15 downto 0)) return string is
+  function hex4 (
+    v : std_logic_vector(15 downto 0)
+  ) return string is
 
     constant digits : string(1 to 16) := "0123456789ABCDEF";
     variable s      : string(1 to 4);
@@ -128,6 +130,7 @@ architecture sim of tb_argus_sample_fetch is
 
   -- What the BRAM holds for (half, row, channel): distinguishable from the
   -- chips' built-in IDENT pattern, and from each other.
+
   function bram_word (
     h : natural;
     r : natural;
@@ -143,9 +146,15 @@ architecture sim of tb_argus_sample_fetch is
 
   -- Sample index -> stored 16-bit word. Indices past both halves hold a
   -- marker so a stride error into unused memory is obvious.
-  function word_at (idx : natural) return std_logic_vector is
 
-    variable h, rem_i, r, c : natural;
+  function word_at (
+    idx : natural
+  ) return std_logic_vector is
+
+    variable h     : natural;
+    variable rem_i : natural;
+    variable r     : natural;
+    variable c     : natural;
 
   begin
 
@@ -185,7 +194,8 @@ architecture sim of tb_argus_sample_fetch is
 
 begin
 
-  clk <= not clk after clk_period / 2 when not sim_done else '0';
+  clk <= not clk after clk_period / 2 when not sim_done else
+         '0';
 
   ------------------------------------------------------------------------
   -- Block Memory Generator port B stand-in: 32-bit, byte addressed,
@@ -362,9 +372,9 @@ begin
       rd_addr <= to_unsigned(idx, 8);
       rd_en   <= '1';
       wait until rising_edge(clk);
-      rd_en <= '0';
+      rd_en   <= '0';
       wait until rising_edge(clk);
-      w := rd_data;
+      w       := rd_data;
 
     end procedure read_word;
 
@@ -376,7 +386,8 @@ begin
 
       if (not cond) then
         errs := errs + 1;
-        report "FAIL " & what severity error;
+        report "FAIL " & what
+          severity error;
       end if;
 
     end procedure expect_flag;
@@ -439,7 +450,6 @@ begin
       -- last amplifier channel of the last row is served, which is before
       -- that row's frame closes, so flags are checked after reading it.
       if (r = samples_per_half - 1) then
-
         if (h = 0) then
           expect_flag(half_consumed(0) = '1',
                       "consumed0 not set after half 0, frame " & integer'image(k));
@@ -457,9 +467,8 @@ begin
                       "consumed1 not set after half 1, frame " & integer'image(k));
           expect_flag(play_half = '0',
                       "play_half not 0 after half 1, frame " & integer'image(k));
-          -- Deliberately not acked.
+        -- Deliberately not acked.
         end if;
-
       end if;
 
       -- After the second flip out of half 0 (into the never-acked half 1),
@@ -471,7 +480,8 @@ begin
 
       if ((k < 3 * samples_per_half - 1) and (underrun = '1')) then
         errs := errs + 1;
-        report "FAIL underrun set early, frame " & integer'image(k) severity error;
+        report "FAIL underrun set early, frame " & integer'image(k)
+          severity error;
       end if;
 
     end loop;
@@ -488,7 +498,8 @@ begin
     if (errs = 0) then
       report "PASS: lane addressing, row advance, consumed/ack, underrun";
     else
-      report "FAIL: " & integer'image(errs) & " error(s)" severity failure;
+      report "FAIL: " & integer'image(errs) & " error(s)"
+        severity failure;
     end if;
 
     sim_done <= true;
@@ -501,8 +512,9 @@ begin
 
     wait for 20 ms;
 
-    if not sim_done then
-      report "FAIL: timeout" severity failure;
+    if (not sim_done) then
+      report "FAIL: timeout"
+        severity failure;
     end if;
 
     wait;

@@ -69,12 +69,12 @@ architecture sim of tb_argus_frame_assembler is
   signal frame_valid : std_logic;
   signal frame_index : unsigned(31 downto 0);
   -- Never raised here; the freeze has its own testbench.
-  signal hold        : std_logic            := '0';
-  signal held        : std_logic;
-  signal rd_en       : std_logic            := '0';
-  signal rd_addr     : unsigned(7 downto 0) := (others => '0');
-  signal rd_data     : std_logic_vector(15 downto 0);
-  signal overrun     : std_logic;
+  signal hold    : std_logic            := '0';
+  signal held    : std_logic;
+  signal rd_en   : std_logic            := '0';
+  signal rd_addr : unsigned(7 downto 0) := (others => '0');
+  signal rd_data : std_logic_vector(15 downto 0);
+  signal overrun : std_logic;
 
   signal sim_done : boolean := false;
   signal errors   : natural := 0;
@@ -228,6 +228,7 @@ begin
     variable want      : std_logic_vector(15 downto 0);
 
     -- Registered read: assert the address, wait a clock, then sample.
+
     procedure read_word (
       idx : in    natural;
       w   : out   std_logic_vector(15 downto 0)
