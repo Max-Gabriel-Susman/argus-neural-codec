@@ -1,28 +1,30 @@
 -- ---------------------------------------------------------------------------
--- argus_rhd2132_model.vhd
---
--- Behavioural RHD2132 SPI slave. Command decode, the two-command result
--- pipeline, register file, CONVERT multiplexer, and CALIBRATE countdown all
--- follow the Intan RHD2000 datasheet.
---
--- SAMPLE SOURCE
---   ext_mode = '0'  sample_value() generates the built-in IDENT or RAMP
---                   pattern (selected by the PATTERN generic).
---   ext_mode = '1'  every CONVERT of an amplifier channel raises ext_req
---                   with ext_ch, and the result is whatever arrives on
---                   ext_data with ext_ack. The built-in pattern is still
---                   written first as a fallback, so an absent fetcher
---                   degrades to ext_mode = '0' rather than to garbage.
---
---   The two-command pipeline makes the external path free: resp_last is not
---   consumed until the next retire, a full command slot later, so a fetch
---   with a few cycles of latency is invisible on the bus.
---
---   Auxiliary channels (at or above CH_PER_CHIP) always use the built-in
---   marker; the external source carries amplifier data only.
---
--- The new inputs carry defaults so existing instantiations that omit them
--- keep compiling with the original behaviour.
+--! @file argus_rhd2132_model.vhd
+--! @brief Behavioural RHD2132 SPI slave.
+--!
+--! Command decode, the two-command result pipeline, register file, CONVERT
+--! multiplexer, and CALIBRATE countdown all follow the Intan RHD2000
+--! datasheet.
+--!
+--! The sample source depends on ext_mode:
+--!
+--! - **ext_mode = '0':** sample_value() generates the built-in IDENT or
+--!   RAMP pattern, selected by the pattern generic.
+--! - **ext_mode = '1':** every CONVERT of an amplifier channel raises
+--!   ext_req with ext_ch, and the result is whatever arrives on ext_data
+--!   with ext_ack. The built-in pattern is still written first as a
+--!   fallback, so an absent fetcher degrades to ext_mode = '0' rather than
+--!   to garbage.
+--!
+--! The two-command pipeline makes the external path free: resp_last is not
+--! consumed until the next retire, a full command slot later, so a fetch
+--! with a few cycles of latency is invisible on the bus.
+--!
+--! Auxiliary channels (at or above ch_per_chip) always use the built-in
+--! marker; the external source carries amplifier data only.
+--!
+--! The ext_mode, ext_data and ext_ack inputs carry defaults, so an
+--! instantiation that omits them compiles and behaves as ext_mode = '0'.
 -- ---------------------------------------------------------------------------
 
 library ieee;
