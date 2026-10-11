@@ -26,7 +26,6 @@
 --! The ext_mode, ext_data and ext_ack inputs carry defaults, so an
 --! instantiation that omits them compiles and behaves as ext_mode = '0'.
 -- ---------------------------------------------------------------------------
-
 library ieee;
   use ieee.std_logic_1164.all;
   use ieee.numeric_std.all;
