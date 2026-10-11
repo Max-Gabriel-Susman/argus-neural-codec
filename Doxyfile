@@ -1,0 +1,87 @@
+# Doxyfile -- HTML reference for the argus-neural-codec VHDL
+#
+#   doxygen                                   build (run from the repo root)
+#   xdg-open build/html/index.html            view
+#
+# Only the settings that differ from Doxygen's defaults are listed; every
+# tag not named here keeps its default. `doxygen -g reference.cfg` writes
+# the full list with every tag explained, if you need to look one up.
+#
+# Written for Doxygen 1.9.1 (Ubuntu 22.04's package); also checked
+# against 1.9.8 (Ubuntu 24.04's).
+
+#---------------------------------------------------------------------------
+# Project
+#---------------------------------------------------------------------------
+
+PROJECT_NAME           = "Argus Neural Codec"
+PROJECT_BRIEF          = "Zynq-7020 PL gateware: simulated RHD2132 chips, SPI acquisition, spike-feature codec"
+
+# /build is already in .gitignore, so generated pages never get committed.
+# One level only: Doxygen creates the output directory but not its parents.
+OUTPUT_DIRECTORY       = build
+
+#---------------------------------------------------------------------------
+# What to read
+#---------------------------------------------------------------------------
+
+# The synthesisable sources, the testbenches, and README.md as the front
+# page. Including sim/ is what lets each entity's page show which benches
+# instantiate it.
+INPUT                  = README.md \
+                         rtl \
+                         sim
+FILE_PATTERNS          = *.vhd
+
+USE_MDFILE_AS_MAINPAGE = README.md
+
+#---------------------------------------------------------------------------
+# How to read it
+#---------------------------------------------------------------------------
+
+# VHDL output: entities and architectures instead of classes, with their
+# generics, ports, signals, constants, processes and functions.
+OPTIMIZE_OUTPUT_VHDL   = YES
+
+# OPTIMIZE_OUTPUT_VHDL overrides these five and prints a warning saying so
+# on every run. Setting them to the values it wants keeps a run silent.
+INHERIT_DOCS           = NO
+HIDE_SCOPE_NAMES       = YES
+EXTRACT_PRIVATE        = YES
+ENABLE_PREPROCESSING   = NO
+EXTRACT_PACKAGE        = YES
+
+# Show every design unit and member, documented or not, so the site is
+# complete from the first run. Only comments that start with --! become
+# documentation text; plain -- comments stay in the source pages.
+EXTRACT_ALL            = YES
+
+#---------------------------------------------------------------------------
+# Output
+#---------------------------------------------------------------------------
+
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+
+# Syntax-highlighted, cross-referenced source pages.
+SOURCE_BROWSER         = YES
+
+#---------------------------------------------------------------------------
+# Graphs (needs Graphviz: sudo apt install graphviz)
+#---------------------------------------------------------------------------
+
+# For VHDL, Doxygen's class graphs become instantiation graphs: each
+# entity's page shows the entities it instantiates and the designs and
+# testbenches that instantiate it. The graph legend page still describes
+# them in C++ terms (inheritance); here an arrow points from a design to
+# an entity it instantiates.
+HAVE_DOT               = YES
+DOT_IMAGE_FORMAT       = svg
+
+#---------------------------------------------------------------------------
+# Messages
+#---------------------------------------------------------------------------
+
+# Print warnings only, not a line for every file processed. A clean run
+# prints nothing.
+QUIET                  = YES

@@ -185,6 +185,33 @@ Every file is VSG-clean: `vsg --fix -c vsg.yaml -f rtl/X.vhd` for RTL,
 `vsg --fix -c vsg.yaml sim/vsg_tb.yaml -f sim/tb_X.vhd` for benches. CI
 runs the linter, all seven benches, and the synthesis check on every push.
 
+## Documentation
+
+Doxygen builds an HTML reference from the VHDL: a page per entity with its
+generics, ports and instantiation graph (the entities it instantiates, and
+the designs and benches that instantiate it), each architecture's signals,
+constants, processes and functions, and cross-referenced source. Install
+once, then build from the repository root:
+
+```bash
+sudo apt install doxygen graphviz
+doxygen
+xdg-open build/html/index.html
+```
+
+`Doxyfile` holds only the settings that differ from Doxygen's defaults,
+each with its reason. Output goes to `build/`, which is gitignored. A clean
+run prints nothing; anything printed is a warning about the comments.
+
+Every design unit appears whether documented or not, but only comments that
+start with `--!` become documentation text; plain `--` comments stay in the
+source pages. `rtl/argus_rhd2132_model.vhd` opens with the first such
+block, a `--! @file` header, and is the pattern for the rest. VSG accepts
+`--!` lines as written, and `vsg --fix` leaves them unchanged. Leave
+character literals such as '0' out of backticks in these comments: Doxygen
+reads a backtick closed by an apostrophe as a quotation and garbles the
+line.
+
 ## What it has been checked against
 
 - The model, in GHDL: 5,760 pairs at reduced parameters, and the full
