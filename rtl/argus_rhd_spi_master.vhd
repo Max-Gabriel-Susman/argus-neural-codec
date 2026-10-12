@@ -1,47 +1,69 @@
 --------------------------------------------------------------------------------
--- argus_rhd_spi_master.vhd
---
--- SPI master for a broadcast RHD2000 bus: one CS/SCLK/MOSI driven to every
--- chip, one MISO returned per chip. All chips receive identical commands, so
--- adding a chip costs one more MISO wire and nothing else.
---
--- Emits a slot stream rather than assembled frames. One result per command
--- slot, already corrected for the two-command pipeline. Downstream consumers
--- -- frame assembler, spike detector -- hang off the same stream; neither
--- needs the other to exist.
---
--- TIMING (125 MHz clk, 8 ns period)
---   SCLK_DIV 5      -> 25 MHz SCLK, 40 ns period, at the datasheet tSCLK floor
---   16 SCLK         -> 80 clocks of shifting
---   SLOT_CLOCKS 119 -> 125e6 / (119 * 35) = 30.01 kS/s per channel
---   CS high         -> 33 clocks = 264 ns, against a 154 ns tCSOFF minimum
---
---   Slot layout, by clk_cnt:
---     0  .. 2    CS low, MOSI holds bit 15, SCLK low   (tCS1 setup, 24 ns)
---     3  .. 82   16 SCLK periods, 5 clocks each
---     83 .. 85   CS still low, SCLK low                (tCS2 hold, 24 ns)
---     86 .. 118  CS high                               (tCSOFF, 264 ns)
---
---   Within one 5-clock bit period: SCLK low for 3, high for 2. MOSI is
---   updated on the falling edge, MISO sampled on the rising edge -- SPI
---   mode 0, matching the RHD2000.
---
---   The bit phase and bit number are tracked by two small counters rather
---   than derived from clk_cnt with mod and division. SCLK_DIV is not a
---   power of two, so those synthesised to real dividers on the critical
---   path and left 0.35 ns of slack at 125 MHz out of context.
---
--- THE PIPELINE IS THE WHOLE GAME
---   A result belongs to the command issued TWO slots earlier. This module
---   resolves that and nothing downstream should think about it again: the
---   channel presented on slot_channel is the channel the data belongs to,
---   never the channel currently being requested. Getting this wrong yields a
---   frame rotated by two channels, which looks entirely plausible and is
---   invisible without identity-stamped stimulus.
---
--- VHDL-93 compatible.
+--! @file    argus_rhd_spi_master.vhd
+--! @brief   SPI master for a broadcast Intan RHD2000 bus; emits a per-slot
+--!          result stream already corrected for the chip's two-command
+--!          pipeline.
+--!
+--! @details
+--! One CS/SCLK/MOSI is driven to every chip and one MISO lane returns per
+--! chip, so every chip receives identical commands and adding a chip costs
+--! one wire. Each sweep issues @c ch_per_chip CONVERT commands followed by
+--! @c aux_slots auxiliary commands; after an initialisation sequence
+--! (register writes and a CALIBRATE) @c ready asserts and the master sweeps
+--! continuously, parking only on a sweep boundary when @c enable drops.
+--!
+--! The output is a slot stream, not assembled frames: one @c slot_valid
+--! pulse per conversion result, with @c slot_channel, @c slot_is_aux and
+--! @c slot_last describing the sample, and lane @e c of @c slot_data in
+--! bits (c*16+15 downto c*16). Downstream consumers (the frame assembler,
+--! the feature codec) hang off this one stream independently.
+--!
+--! @par The pipeline is the whole game
+--! An RHD2000 returns the result of the command issued two slots earlier.
+--! This module resolves that offset: @c slot_channel is the channel the
+--! data belongs to, never the channel currently being requested. Getting
+--! this wrong rotates every frame by two channels, which looks plausible
+--! and is invisible without identity-stamped stimulus (see
+--! @c tb_argus_rhd_spi_master).
+--!
+--! @par Timing (125 MHz clk, 8 ns)
+--! - @c sclk_div 5    -> 25 MHz SCLK, at the datasheet tSCLK floor
+--! - 16 SCLK periods  -> 80 clocks of shifting
+--! - @c slot_clocks 119 -> 125e6 / (119 * 35) = 30.01 kS/s per channel
+--! - CS high 33 clocks = 264 ns, against a 154 ns tCSOFF minimum
+--!
+--! Slot layout by @c clk_cnt: 0..2 CS low, MOSI holds bit 15 (tCS1);
+--! 3..82 sixteen SCLK periods of @c sclk_div clocks; 83..85 CS hold (tCS2);
+--! 86..118 CS high (tCSOFF). Within a bit period SCLK is low for three
+--! clocks and high for two; MOSI updates on the falling edge and MISO is
+--! sampled on the rising edge (SPI mode 0). Bit phase and bit number are
+--! tracked by two small counters rather than derived from @c clk_cnt with
+--! mod and division: @c sclk_div is not a power of two, and the dividers
+--! that produced landed on the critical path.
+--!
+--! @par Generics
+--! - @c chip_count   chips on the bus, one MISO lane each (3)
+--! - @c ch_per_chip  amplifier channels per chip; higher channels are aux (32)
+--! - @c aux_slots    auxiliary command slots per sweep (3)
+--! - @c slot_clocks  clocks per command slot; sets the sample rate with the
+--!                   sweep length, rate = clk / (slot_clocks * (ch_per_chip + aux_slots)) (119)
+--! - @c sclk_div     clocks per SCLK period, 4..16 (5)
+--!
+--! @par Ports
+--! - @c clk, @c rst_n       fabric clock and active-low reset
+--! - @c enable              low parks the bus; deasserting mid-sweep finishes the sweep
+--! - @c sclk, @c cs_n, @c mosi  broadcast SPI outputs
+--! - @c miso                one lane per chip, @c chip_count wide
+--! - @c slot_valid, @c slot_channel, @c slot_data, @c slot_is_aux, @c slot_last
+--!                          the slot stream (see above)
+--! - @c ready               high once initialisation is complete; discard the
+--!                          stream until it asserts
+--!
+--! @note VHDL-93 compatible. Verified by @c sim/tb_argus_rhd_spi_master.vhd
+--!       against three @c argus_rhd2132_model instances: slot pipeline,
+--!       three lanes, sweep coherence, aux slots, SCLK timing.
+--! @see argus_rhd2132_model, argus_frame_assembler, argus_feature, argus_acq_top
 --------------------------------------------------------------------------------
-
 library ieee;
   use ieee.std_logic_1164.all;
   use ieee.numeric_std.all;
