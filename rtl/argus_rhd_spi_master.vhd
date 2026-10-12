@@ -64,6 +64,7 @@
 --!       three lanes, sweep coherence, aux slots, SCLK timing.
 --! @see argus_rhd2132_model, argus_frame_assembler, argus_feature, argus_acq_top
 --------------------------------------------------------------------------------
+
 library ieee;
   use ieee.std_logic_1164.all;
   use ieee.numeric_std.all;
