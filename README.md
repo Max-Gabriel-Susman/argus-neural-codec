@@ -187,11 +187,16 @@ runs the linter, all seven benches, and the synthesis check on every push.
 
 ## Documentation
 
-Doxygen builds an HTML reference from the VHDL: a page per entity with its
-generics, ports and instantiation graph (the entities it instantiates, and
-the designs and benches that instantiate it), each architecture's signals,
-constants, processes and functions, and cross-referenced source. Install
-once, then build from the repository root:
+The reference is organised the way the fabric is, by design unit. Doxygen
+reads `rtl/` and `sim/` in VHDL mode and writes a page per entity: its
+generics with their defaults, its ports, its libraries and use clauses,
+and a graph of what instantiates it and what it instantiates (Doxygen
+labels this an inheritance diagram; read the arrows as instantiation). A
+second page per architecture lists the constants with their values, the
+SPI master's `init_rom` included, the processes with their sensitivity
+lists, and the functions, signals and types, all linked to the source.
+The benches are read too, so every entity's page shows the bench that
+proves it.
 
 ```bash
 sudo apt install doxygen graphviz
@@ -199,18 +204,24 @@ doxygen
 xdg-open build/html/index.html
 ```
 
-`Doxyfile` holds only the settings that differ from Doxygen's defaults,
-each with its reason. Output goes to `build/`, which is gitignored. A clean
-run prints nothing; anything printed is a warning about the comments.
+`Doxyfile` holds only what differs from the defaults: VHDL output,
+architecture-local signals and constants included, the C preprocessor
+off since VHDL has none, and this README as the front page. Output lands
+in `build/`, which is gitignored.
 
-Every design unit appears whether documented or not, but only comments that
-start with `--!` become documentation text; plain `--` comments stay in the
-source pages. `rtl/argus_rhd2132_model.vhd` opens with the first such
-block, a `--! @file` header, and is the pattern for the rest. VSG accepts
-`--!` lines as written, and `vsg --fix` leaves them unchanged. Leave
-character literals such as '0' out of backticks in these comments: Doxygen
-reads a backtick closed by an apostrophe as a quotation and garbles the
-line.
+Every unit is on the page whether or not it is described; only comments
+that begin `--!` become its description, and plain `--` comments stay in
+the source view. A file's description is a `--! @file` block at the top;
+a port's or a generic's is a `--!` line above it or `--!<` after it on
+the same line. `rtl/argus_rhd_spi_master.vhd` opens with the full form
+(`@file`, `@brief`, `@details`, `@par` sections) and
+`rtl/argus_rhd2132_model.vhd` the short one; both are the pattern. Two
+rules keep VSG and Doxygen happy together: leave a blank line between the
+header block and `library ieee;` (VSG's `library_003`), and never put a
+character literal such as '0' inside backticks, because Doxygen reads a
+backtick closed by an apostrophe as a quotation and garbles the line;
+the existing blocks write identifiers as `@c name`, which sidesteps it.
+The `docs` job in CI runs the same build with warnings as errors.
 
 ## What it has been checked against
 
