@@ -27,12 +27,15 @@
 --   4. AUXILIARY SLOTS. Channels at or above CH_PER_CHIP take a different
 --      path through the model and must be flagged by slot_is_aux.
 --
---   5. TIMING. SCLK period and CS-high duration are measured against the
---      datasheet minimums rather than assumed from the generics.
+--   5. TIMING. Every SPI interval the RHD2000 datasheet bounds is measured
+--      from the waveform and checked against its minimum: tSCLK, tSCLKH,
+--      tSCLKL, tCS1, tCS2 and tCSOFF. Nothing is assumed from the generics.
 --
--- To confirm check 5 actually fires, set SCLK_DIV to 4 below and re-run: a
--- 32 ns SCLK against a 40 ns minimum must produce FAIL lines. A check that
--- has never failed is not yet known to work.
+-- Check 5 was first written against a 40 ns tSCLK and the period alone, and
+-- passed a master running at 40 ns with a 16 ns high phase -- both outside
+-- the RHD2000's 41.6 ns and 20.8 ns minimums. To confirm the check fires,
+-- set SCLK_DIV to 5 below and re-run: it must produce FAIL lines. A check
+-- that has never failed is not yet known to work.
 --
 -- The error counters are split per process. An unresolved signal type admits
 -- exactly one driver, so a single shared counter fails elaboration.
@@ -58,9 +61,21 @@ architecture sim of tb_argus_rhd_spi_master is
   constant clk_period : time    := 8 ns;   -- 125 MHz
   constant sweeps     : natural := 4;
 
-  -- Datasheet minimums, checked against the measured waveform.
-  constant tsclk_min  : time := 40 ns;
+  -- The sample rate everything downstream is built on: 125 MHz / 4165 =
+  -- 30012 sweeps per second. Changing the slot layout must not move it.
+  constant sweep_clocks : natural := 4165;
+
+  -- RHD2000 datasheet SPI minimums, checked against the measured waveform.
+  constant tsclk_min  : time := 41.6 ns;
+  constant tsclkh_min : time := 20.8 ns;
+  constant tsclkl_min : time := 20.8 ns;
+  constant tcs1_min   : time := 20.8 ns;
+  constant tcs2_min   : time := 20.8 ns;
   constant tcsoff_min : time := 154 ns;
+
+  -- A violation repeats on every bit of every slot. Report the first few
+  -- and count the rest.
+  constant max_reports : natural := 8;
 
   signal clk    : std_logic := '0';
   signal rst_n  : std_logic := '0';
@@ -90,6 +105,7 @@ architecture sim of tb_argus_rhd_spi_master is
   -- never firing and reporting zero errors.
   signal sclk_edges : natural := 0;
   signal cs_gaps    : natural := 0;
+  signal cs_windows : natural := 0;
 
   function hex4 (
     v : std_logic_vector(15 downto 0)
@@ -214,6 +230,8 @@ begin
     variable word      : std_logic_vector(15 downto 0);
     variable slots     : natural := 0;
     variable errs      : natural := 0;
+    variable last_at   : time;
+    variable have_last : boolean := false;
 
   begin
 
@@ -309,6 +327,18 @@ begin
                    & ": slot_last not set on the last amplifier channel"
               severity error;
           end if;
+
+          -- Sweep period, measured between successive last channels.
+          if (have_last and (now - last_at /= sweep_clocks * clk_period)) then
+            errs := errs + 1;
+            report "FAIL sweep " & integer'image(sweep)
+                & ": period " & to_string(now - last_at, ns)
+                & ", expected " & to_string(sweep_clocks * clk_period, ns)
+              severity error;
+          end if;
+
+          last_at   := now;
+          have_last := true;
         elsif (slot_last /= '0') then
           errs := errs + 1;
           report "FAIL sweep " & integer'image(sweep)
@@ -336,18 +366,19 @@ begin
 
     report "checked " & integer'image(slots) & " slots over "
            & integer'image(sweeps) & " sweeps";
-    report "timing: " & integer'image(sclk_edges) & " SCLK edges, "
+    report "timing: " & integer'image(sclk_edges) & " SCLK periods, "
+           & integer'image(cs_windows) & " CS windows, "
            & integer'image(cs_gaps) & " CS gaps measured";
 
     -- A timing process that never fired would report zero errors and look
     -- like a pass.
-    if ((sclk_edges = 0) or (cs_gaps = 0)) then
+    if ((sclk_edges = 0) or (cs_windows = 0) or (cs_gaps = 0)) then
       report "FAIL: timing process never observed the bus"
         severity failure;
     end if;
 
     if ((check_errors = 0) and (time_errors = 0)) then
-      report "PASS: pipeline, chip lanes, sweep coherence, aux slots and timing verified";
+      report "PASS: pipeline, chip lanes, sweep coherence, sweep period, aux slots and timing verified";
     else
       report "FAIL: " & integer'image(check_errors) & " stream error(s), "
              & integer'image(time_errors) & " timing error(s)"
