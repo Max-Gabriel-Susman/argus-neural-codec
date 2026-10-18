@@ -253,8 +253,8 @@ begin
       if (to_integer(slot_channel) /= expect_ch) then
         errs := errs + 1;
         report "FAIL sweep " & integer'image(sweep)
-               & ": slot_channel " & integer'image(to_integer(slot_channel))
-               & ", expected " & integer'image(expect_ch)
+            & ": period " & to_string(now - last_at, ns)
+            & ", expected " & to_string(sweep_clocks * clk_period, ns)
           severity error;
       end if;
 
@@ -430,7 +430,7 @@ begin
       measured := clocks * clk_period;
 
       if (measured < min_time) then
-        if (errc < max_reports) then
+        if (errs < max_reports) then
           report "FAIL " & name & " " & to_string(measured, ns)
             & " below the " & to_string(min_time, ns) & " minimum"
             severity error;
@@ -464,7 +464,7 @@ begin
         -- later one closes a low phase and a full period.
         if ((sclk = '1') and (sclk_q = '0') and (cs_n = '0')) then
           if (have_fall) then
-            check_min("tSCLKL", since_fall, tsclk1_min);
+            check_min("tSCLKL", since_fall, tsclkl_min);
           else
             check_min("tCS1", since_csf, tcs1_min);
           end if;
