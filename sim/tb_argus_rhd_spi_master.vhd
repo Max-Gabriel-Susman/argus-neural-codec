@@ -373,65 +373,104 @@ begin
 
     variable sclk_q     : std_logic := '0';
     variable cs_q       : std_logic := '1';
-    variable since_sclk : natural   := 0;
-    variable since_cs   : natural   := 0;
-    variable have_sclk  : boolean   := false;
+    variable since_rise : natural   := 0;
+    variable since_fall : natural   := 0;
+    variable since_csf  : natural   := 0;
+    variable since_csr  : natural   := 0;
+    variable have_rise  : boolean   := false;
+    variable have_fall  : boolean   := false;
     variable have_cs    : boolean   := false;
     variable errs       : natural   := 0;
     variable n_sclk     : natural   := 0;
+    variable n_win      : natural   := 0;
     variable n_cs       : natural   := 0;
-    variable measured   : time;
+
+    procedure check_min (
+      name     : string;
+      clocks   : natural;
+      min_time : time
+    ) is
+
+      -- Compare one measured interval, in clocks, against its minimum.
+      variable measured : time;
+
+    begin
+
+      measured := clocks * clk_period;
+
+      if (measured < min_time) then
+        if (errc < max_reports) then
+          report "FAIL " & name & " " & to_string(measured, ns)
+            & " below the " & to_string(min_time, ns) & " minimum"
+            severity error;
+        end if;
+
+        errs := errs + 1;
+      end if;
+
+    end procedure check_min;
 
   begin
 
     if rising_edge(clk) then
       if (ready = '1') then
-        since_sclk := since_sclk + 1;
-        since_cs   := since_cs + 1;
+        since_rise := since_rise + 1;
+        since_fall := since_fall + 1;
+        since_csf  := since_csf + 1;
+        since_csr  := since_csr + 1;
 
-        -- Rising SCLK edge while a chip is selected.
-        if ((sclk = '1') and (sclk_q = '0') and (cs_n = '0')) then
-          if (have_sclk) then
-            measured := since_sclk * clk_period;
-            n_sclk   := n_sclk + 1;
-
-            if (measured < tsclk_min) then
-              errs := errs + 1;
-              report "FAIL tSCLK " & time'image(measured)
-                     & " below the " & time'image(tsclk_min) & " minimum"
-                severity error;
-            end if;
-          end if;
-
-          have_sclk  := true;
-          since_sclk := 0;
-        end if;
-
-        -- CS rising: the inter-command gap opens. The SCLK interval across
-        -- that gap spans two commands and is not a tSCLK.
-        if ((cs_n = '1') and (cs_q = '0')) then
-          have_cs   := true;
-          since_cs  := 0;
-          have_sclk := false;
-        end if;
-
-        -- CS falling: the gap closes.
+        -- CS falling: a word begins. Closes the CS-high gap.
         if ((cs_n = '0') and (cs_q = '1')) then
           if (have_cs) then
-            measured := since_cs * clk_period;
-            n_cs     := n_cs + 1;
-
-            if (measured < tcsoff_min) then
-              errs := errs + 1;
-              report "FAIL tCSOFF " & time'image(measured)
-                     & " below the " & time'image(tcsoff_min) & " minimum"
-                severity error;
-            end if;
+            check_min("tCSOFF", since_csr, tcsoff_min);
+            n_cs := n_cs + 1;
           end if;
+
+          since_csf := 0;
+        end if;
+
+        -- SCLK rising inside a word. The first one closes tCS1; every
+        -- later one closes a low phase and a full period.
+        if ((sclk = '1') and (sclk_q = '0') and (cs_n = '0')) then
+          if (have_fall) then
+            check_min("tSCLKL", since_fall, tsclk1_min);
+          else
+            check_min("tCS1", since_csf, tcs1_min);
+          end if;
+
+          if (have_rise) then
+            check_min("tSCLK", since_rise, tsclk_min);
+            n_sclk := n_sclk + 1;
+          end if;
+
+          have_rise  := true;
+          since_rise := 0;
+        end if;
+
+        -- SCLK falling inside a word closes a high phase.
+        if ((sclk = '0') and (sclk_q = '1') and (cs_n = '0')) then
+          check_min("tSCLKH", since_rise, tsclkh_min);
+          have_fall  := true;
+          since_fall := 0;
+        end if;
+
+        -- CS rising: the word ends. The last SCLK fall closes tCS2, and the
+        -- next word starts its own intervals from scratch.
+        if ((cs_n = '1') and (cs_q = '0')) then
+          if (have_fall) then
+            check_min("tCS2", since_fall, tcs2_min);
+            n_win := n_win + 1;
+          end if;
+
+          have_rise := false;
+          have_fall := false;
+          have_cs   := true;
+          since_csr := 0;
         end if;
 
         time_errors <= errs;
         sclk_edges  <= n_sclk;
+        cs_windows  <= n_win;
         cs_gaps     <= n_cs;
       end if;
 
@@ -439,7 +478,7 @@ begin
       cs_q   := cs_n;
     end if;
 
-  end process timing;
+  end process timing; -- end changes
 
   ------------------------------------------------------------------------
   -- Watchdog. A stalled sequencer would otherwise hang rather than fail.
