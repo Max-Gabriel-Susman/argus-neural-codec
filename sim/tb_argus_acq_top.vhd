@@ -7,7 +7,7 @@
 -- and the bus fabric.
 --
 -- SEQUENCE
---   1. ID reads back as "ACQ3" -- the address map is where we think it is,
+--   1. ID reads back as "ACQ4" -- the address map is where we think it is,
 --      and this is the fabric revision the firmware expects.
 --   2. STATUS shows not-ready before enable; unmapped reads return the
 --      sentinel, not garbage.
@@ -27,6 +27,13 @@
 --      against the model is tb_argus_feature's job; this proves the bank,
 --      the handshake, and the register decode.
 --   7. Soft reset returns STATUS, FRAME_INDEX and FEATURE_INDEX to zero.
+--   8. Lane sources. An external RHD2132 model hangs off the spi_* ports
+--      with a 28 ns transport delay on its MISO, about what a PMOD cable
+--      and a Tiny Tapeout pin mux add. Lane 0 switched off reads zeros.
+--      Lane 0 switched to the pins is read at every MISO_DELAY from 0 to 5:
+--      0 must fail (the answer arrives after the rising edge) and 3 must
+--      pass, and lanes 1 and 2 must be untouched throughout. The printed
+--      sweep is the calibration the firmware will do on real hardware.
 --
 -- Step 6 needs 1500 sweeps -- 50 ms of simulated time, most of this
 -- bench's run.
@@ -69,8 +76,13 @@ architecture sim of tb_argus_acq_top is
   constant reg_frame_base    : natural := 16#100#;
   constant reg_feature_base  : natural := 16#400#;
   constant reg_unmapped      : natural := 16#080#;
+  constant reg_lane_src      : natural := 16#020#;
+  constant reg_miso_delay    : natural := 16#024#;
 
-  constant id_expect : std_logic_vector(31 downto 0) := x"41435133";
+  -- Cable and pin-mux delay on the external chip's MISO, step 8.
+  constant ext_round_trip : time := 28 ns;
+
+  constant id_expect : std_logic_vector(31 downto 0) := x"41435134";
   constant unmapped  : std_logic_vector(31 downto 0) := x"DEADBEEF";
 
   -- CTRL bit 0 enable, bit 3 hold, bit 4 feat_hold. STATUS bit 2 held,
@@ -110,6 +122,15 @@ architecture sim of tb_argus_acq_top is
 
   signal sim_done : boolean := false;
 
+  -- The external chip on the PMOD pins, step 8.
+  signal spi_cs_n : std_logic;
+  signal spi_sclk : std_logic;
+  signal spi_mosi : std_logic;
+  signal spi_miso : std_logic_vector(chip_count - 1 downto 0);
+  signal ext_miso : std_logic;
+
+  type frame_t is array (0 to total_channels - 1) of std_logic_vector(15 downto 0);
+
   function hex8 (
     v : std_logic_vector(31 downto 0)
   ) return string is
@@ -143,6 +164,35 @@ architecture sim of tb_argus_acq_top is
            & std_logic_vector(idx);
 
   end function ident_word;
+
+  -- Words in one lane that do not carry that lane's identity pattern. Each
+  -- lane is checked against its own sample index: an external chip is not
+  -- reset with the chain, so its index runs independently.
+
+  function lane_bad (
+    frame : frame_t;
+    lane  : natural
+  ) return natural is
+
+    variable idx : unsigned(7 downto 0);
+    variable bad : natural;
+
+  begin
+
+    idx := unsigned(frame(lane * ch_per_chip)(7 downto 0));
+    bad := 0;
+
+    for i in 0 to ch_per_chip - 1 loop
+
+      if (frame(lane * ch_per_chip + i) /= ident_word(lane, to_unsigned(i, 6), idx)) then
+        bad := bad + 1;
+      end if;
+
+    end loop;
+
+    return bad;
+
+  end function lane_bad;
 
 begin
 
@@ -187,8 +237,45 @@ begin
       bram_we       => open,
       bram_addr     => open,
       bram_din      => open,
-      bram_dout     => bram_dout
+      bram_dout     => bram_dout,
+      spi_cs_n      => spi_cs_n,
+      spi_sclk      => spi_sclk,
+      spi_mosi      => spi_mosi,
+      spi_miso      => spi_miso
     );
+
+  ------------------------------------------------------------------------
+  -- An external chip on the pins, as chip 0, reset only with the bus. It
+  -- runs on the same clock as the DUT, which a real chip would not, but it
+  -- only samples SCLK and CS like any SPI slave; the transport delay is
+  -- what makes it external.
+  ------------------------------------------------------------------------
+
+  ext_chip : entity work.argus_rhd2132_model
+    generic map (
+      ch_per_chip  => CH_PER_CHIP,
+      chip_id      => 0,
+      chip_type_id => 1,
+      pattern      => 0
+    )
+    port map (
+      clk           => clk,
+      rst_n         => resetn,
+      sclk          => spi_sclk,
+      cs_n          => spi_cs_n,
+      mosi          => spi_mosi,
+      miso          => ext_miso,
+      miso_oe       => open,
+      ext_req       => open,
+      ext_ch        => open,
+      dbg_last_cmd  => open,
+      dbg_cmd_valid => open,
+      dbg_last_resp => open
+    );
+
+  spi_miso(0) <= transport ext_miso after ext_round_trip;
+
+  spi_miso(chip_count - 1 downto 1) <= (others => '0');
 
   stim : process is
 
@@ -204,6 +291,10 @@ begin
     variable zero_pow  : natural;
     variable nz_cnt    : natural;
     variable cnt0      : natural;
+    variable frame     : frame_t;
+    variable bad       : natural;
+    variable lane_ok   : boolean;
+    variable ok_at     : std_logic_vector(5 downto 0);
 
     ----------------------------------------------------------------------
     -- AXI4-Lite bus functional model
@@ -283,6 +374,78 @@ begin
 
     end procedure expect;
 
+    -- Configure the lanes under soft reset, start the chain, let it run a
+    -- few sweeps, and read one frame under the hold: what the firmware does
+    -- at boot.
+
+    procedure run_lanes (
+      src   : in    std_logic_vector(31 downto 0);
+      delay : in    std_logic_vector(31 downto 0);
+      words : out   frame_t
+    ) is
+
+      variable r : std_logic_vector(31 downto 0);
+      variable n : natural;
+
+    begin
+
+      axi_write(REG_CTRL, x"00000002");
+      axi_write(REG_LANE_SRC, src);
+      axi_write(REG_MISO_DELAY, delay);
+      expect(REG_LANE_SRC, src, "LANE_SRC readback");
+      expect(REG_MISO_DELAY, delay, "MISO_DELAY readback");
+      axi_write(REG_CTRL, CTRL_ENABLE);
+
+      n := 0;
+
+      loop
+
+        axi_read(REG_STATUS, r);
+        exit when r(0) = '1';
+        n := n + 1;
+
+        if (n > 1000) then
+          errs := errs + 1;
+          report "FAIL: ready never asserted after lane reconfiguration"
+            severity error;
+          exit;
+        end if;
+
+        wait for 1 us;
+
+      end loop;
+
+      wait for 100 us;
+
+      axi_write(REG_CTRL, CTRL_ENABLE_HOLD);
+      n := 0;
+
+      loop
+
+        axi_read(REG_STATUS, r);
+        exit when r(status_held_bit) = '1';
+        n := n + 1;
+
+        if (n > 100) then
+          errs := errs + 1;
+          report "FAIL: STATUS.held never asserted"
+            severity error;
+          exit;
+        end if;
+
+      end loop;
+
+      for i in 0 to total_channels - 1 loop
+
+        axi_read(REG_FRAME_BASE + 4 * i, r);
+        words(i) := r(15 downto 0);
+
+      end loop;
+
+      axi_write(REG_CTRL, CTRL_ENABLE);
+
+    end procedure run_lanes;
+
   begin
 
     resetn <= '0';
@@ -335,7 +498,8 @@ begin
     -- 4. FRAME_INDEX advances at the sweep rate.
     ----------------------------------------------------------------------
     axi_read(REG_FRAME_INDEX, fi_before);
-    wait for 100 us;                                                                           -- three sweeps at 33.3 us
+    -- Three sweeps at 33.3 us.
+    wait for 100 us;
     axi_read(REG_FRAME_INDEX, fi_after);
 
     if (unsigned(fi_after) - unsigned(fi_before) < 2) then
@@ -439,7 +603,8 @@ begin
         severity error;
     end if;
 
-    wait for 100 us;                                                                           -- three sweeps
+    -- Three sweeps.
+    wait for 100 us;
     axi_read(REG_FRAME_INDEX, fi_after);
 
     if (unsigned(fi_after) <= unsigned(fi_before)) then
@@ -566,8 +731,102 @@ begin
     axi_write(REG_CTRL, x"00000000");
 
     ----------------------------------------------------------------------
+    -- 8. Lane sources: off, then the pins at every MISO_DELAY.
+    ----------------------------------------------------------------------
+    expect(REG_LANE_SRC, x"00000000", "LANE_SRC after reset");
+    expect(REG_MISO_DELAY, x"00000000", "MISO_DELAY after reset");
+
+    run_lanes(x"00000002", x"00000000", frame);
+    bad := 0;
+
+    for i in 0 to ch_per_chip - 1 loop
+
+      if (frame(i) /= x"0000") then
+        bad := bad + 1;
+      end if;
+
+    end loop;
+
+    if (bad /= 0) then
+      errs := errs + 1;
+      report "FAIL: lane 0 off, but " & integer'image(bad) & " of its words are not zero"
+        severity error;
+    end if;
+
+    for lane in 1 to chip_count - 1 loop
+
+      if (lane_bad(frame, lane) /= 0) then
+        errs := errs + 1;
+        report "FAIL: lane " & integer'image(lane) & " disturbed by lane 0 off"
+          severity error;
+      end if;
+
+    end loop;
+
+    report "lane 0 off: reads zeros, lanes 1-2 unaffected";
+
+    ok_at := (others => '0');
+
+    for d in 0 to 5 loop
+
+      run_lanes(x"00000001", std_logic_vector(to_unsigned(d, 32)), frame);
+      bad := lane_bad(frame, 0);
+
+      if (bad = 0) then
+        ok_at(d) := '1';
+      end if;
+
+      report "MISO_DELAY " & integer'image(d) & ": lane 0 on the pins, "
+             & integer'image(bad) & " of 32 words wrong";
+
+      lane_ok := true;
+
+      for lane in 1 to chip_count - 1 loop
+
+        if (lane_bad(frame, lane) /= 0) then
+          lane_ok := false;
+        end if;
+
+      end loop;
+
+      if (not lane_ok) then
+        errs := errs + 1;
+        report "FAIL: an internal lane changed with lane 0 on the pins"
+          severity error;
+      end if;
+
+    end loop;
+
+    if (ok_at(0) = '1') then
+      errs := errs + 1;
+      report "FAIL: lane 0 read correctly at MISO_DELAY 0 through a "
+             & time'image(ext_round_trip) & " round trip; the bench is not testing the delay"
+        severity error;
+    end if;
+
+    if (ok_at(3) = '0') then
+      errs := errs + 1;
+      report "FAIL: lane 0 still wrong at MISO_DELAY 3"
+        severity error;
+    end if;
+
+    run_lanes(x"00000000", x"00000000", frame);
+
+    for lane in 0 to chip_count - 1 loop
+
+      if (lane_bad(frame, lane) /= 0) then
+        errs := errs + 1;
+        report "FAIL: lane " & integer'image(lane) & " wrong after returning to the models"
+          severity error;
+      end if;
+
+    end loop;
+
+    axi_write(REG_CTRL, x"00000000");
+
+    ----------------------------------------------------------------------
     if (errs = 0) then
-      report "PASS: address map, enable, sweep rate, held frame, feature bank, soft reset";
+      report "PASS: address map, enable, sweep rate, held frame, feature bank, soft reset, lane sources";
     else
       report "FAIL: " & integer'image(errs) & " error(s)"
         severity failure;

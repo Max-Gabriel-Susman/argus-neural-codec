@@ -40,6 +40,16 @@ if {$rtl_added} {
   update_compile_order -fileset sources_1
 }
 
+# -- 0b'. Every constraints file. A port with no PACKAGE_PIN fails the
+#         bitstream DRC (UCIO-1) only after implementation, minutes in.
+foreach f [glob -nocomplain $repo/constraints/*.xdc] {
+  set f [file normalize $f]
+  if {[get_files -quiet -of_objects [get_filesets constrs_1] $f] eq ""} {
+    puts "adding $f to constrs_1"
+    add_files -fileset constrs_1 -norecurse $f
+  }
+}
+
 # -- 0b. Regenerate the module reference. It is synthesised out of context
 #        from a checkpoint under .gen/, and reset_run synth_1 below does not
 #        touch that run: RTL edits were being linked from a stale .dcp, and

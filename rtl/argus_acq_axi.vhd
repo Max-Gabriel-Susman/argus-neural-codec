@@ -22,7 +22,7 @@
 --                              bit 3  feat_held   the same, for the
 --                                                 feature bank
 --   0x008  FRAME_INDEX    RO   sweep number of the frame in the read bank
---   0x00C  ID             RO   0x41435133 "ACQ3" -- read this first
+--   0x00C  ID             RO   0x41435134 "ACQ4" -- read this first
 --   0x010  REPLAY_STATUS  RO   bit 0     play_half   half being played
 --                              bit 1     consumed0   half 0 needs refill
 --                              bit 2     consumed1   half 1 needs refill
@@ -34,6 +34,17 @@
 --                              bit 2  clear underrun
 --   0x018  FEATURE_INDEX  RO   bins completed; the bank holds the latest
 --   0x01C  FEAT_DROPPED   RO   bins lost to a hold longer than one bin
+--   0x020  LANE_SRC       RW   two bits per lane, lane c in bits 2c+1:2c:
+--                                00  the chip model inside the fabric
+--                                01  an external chip on the PMOD pins
+--                                1x  off: MISO held low, the lane reads 0
+--                              applied when the chain leaves reset, so set
+--                              it under CTRL.soft_reset
+--   0x024  MISO_DELAY     RW   three bits per lane, lane c in bits
+--                              3c+2:3c: fabric clocks to delay that lane's
+--                              MISO capture past the SCLK rising edge, to
+--                              cover an external chip's round trip
+--                              (argus_rhd_spi_master); applied with LANE_SRC
 --   0x100  FRAME[0]       RO   one 16-bit sample in the low half of each word
 --     ..
 --   0x27C  FRAME[95]
@@ -56,7 +67,9 @@
 --   line of the smoke test instead of three lines later with a symptom that
 --   reads like an RTL bug. ACQ2 was the first build with hold/held; every
 --   build before it reported ACQ1 regardless of what it carried. ACQ3 adds
---   the feature bank and its registers.
+--   the feature bank and its registers. ACQ4 adds LANE_SRC and MISO_DELAY,
+--   the first of the configurable-headstage registers; the rest of that
+--   work lands under the same ID before it merges.
 --
 -- READING A FRAME
 --   FRAME words come from the assembler's read port, which is registered, so
@@ -137,6 +150,10 @@ entity argus_acq_axi is
     ack_consumed    : out   std_logic_vector(1 downto 0);
     clear_underrun  : out   std_logic;
 
+    -- Lane configuration, to argus_acq_top
+    lane_src   : out   std_logic_vector(31 downto 0);
+    miso_delay : out   std_logic_vector(31 downto 0);
+
     -- Frame read port, to the assembler
     rd_en   : out   std_logic;
     rd_addr : out   unsigned(7 downto 0);
@@ -156,7 +173,7 @@ end entity argus_acq_axi;
 
 architecture rtl of argus_acq_axi is
 
-  constant id_value : std_logic_vector(31 downto 0) := x"41435133";
+  constant id_value : std_logic_vector(31 downto 0) := x"41435134";
   constant unmapped : std_logic_vector(31 downto 0) := x"DEADBEEF";
 
   -- Word addresses.
@@ -168,6 +185,8 @@ architecture rtl of argus_acq_axi is
   constant w_replay_ack    : natural := 5;
   constant w_feature_index : natural := 6;
   constant w_feat_dropped  : natural := 7;
+  constant w_lane_src      : natural := 8;
+  constant w_miso_delay    : natural := 9;
   constant w_frame_base    : natural := 64;  -- 0x100
   constant w_feature_base  : natural := 256; -- 0x400
   constant feature_words   : natural := 2 * total_channels;
@@ -198,6 +217,9 @@ architecture rtl of argus_acq_axi is
   signal ctrl_ext    : std_logic;
   signal ctrl_hold   : std_logic;
   signal ctrl_fhold  : std_logic;
+
+  signal lane_src_r   : std_logic_vector(31 downto 0);
+  signal miso_delay_r : std_logic_vector(31 downto 0);
 
   signal ack_r : std_logic_vector(1 downto 0);
   signal clr_r : std_logic;
@@ -234,20 +256,22 @@ begin
 
     if rising_edge(s_axi_aclk) then
       if (s_axi_aresetn = '0') then
-        wr_state    <= wr_idle;
-        awready_r   <= '0';
-        wready_r    <= '0';
-        bvalid_r    <= '0';
-        wr_word     <= 0;
-        wr_data     <= (others => '0');
-        wr_strb     <= (others => '0');
-        ctrl_enable <= '0';
-        ctrl_reset  <= '0';
-        ctrl_ext    <= '0';
-        ctrl_hold   <= '0';
-        ctrl_fhold  <= '0';
-        ack_r       <= (others => '0');
-        clr_r       <= '0';
+        wr_state     <= wr_idle;
+        awready_r    <= '0';
+        wready_r     <= '0';
+        bvalid_r     <= '0';
+        wr_word      <= 0;
+        wr_data      <= (others => '0');
+        wr_strb      <= (others => '0');
+        ctrl_enable  <= '0';
+        ctrl_reset   <= '0';
+        ctrl_ext     <= '0';
+        ctrl_hold    <= '0';
+        ctrl_fhold   <= '0';
+        lane_src_r   <= (others => '0');
+        miso_delay_r <= (others => '0');
+        ack_r        <= (others => '0');
+        clr_r        <= '0';
       else
         -- Pulses.
         ack_r <= (others => '0');
@@ -288,6 +312,14 @@ begin
 
                     ack_r <= wr_data(1 downto 0);
                     clr_r <= wr_data(2);
+
+                  when w_lane_src =>
+
+                    lane_src_r <= wr_data;
+
+                  when w_miso_delay =>
+
+                    miso_delay_r <= wr_data;
 
                   when others =>
 
@@ -424,6 +456,14 @@ begin
 
                     rdata_r <= x"0000" & std_logic_vector(feat_dropped);
 
+                  when w_lane_src =>
+
+                    rdata_r <= lane_src_r;
+
+                  when w_miso_delay =>
+
+                    rdata_r <= miso_delay_r;
+
                   when others =>
 
                     rdata_r <= unmapped;
@@ -487,6 +527,8 @@ begin
   rd_en          <= rd_en_r;
   rd_addr        <= rd_addr_r;
   feat_hold      <= ctrl_fhold;
+  lane_src       <= lane_src_r;
+  miso_delay     <= miso_delay_r;
   feat_rd_en     <= feat_rd_en_r;
   feat_rd_addr   <= feat_rd_addr_r;
 

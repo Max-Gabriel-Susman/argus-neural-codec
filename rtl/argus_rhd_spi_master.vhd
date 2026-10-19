@@ -51,6 +51,19 @@
 --! power of two, and the dividers that produced landed on the critical
 --! path.
 --!
+--! @par Sampling an external chip
+--! A chip inside the fabric answers within a clock of the SCLK falling
+--! edge, so sampling MISO on the rising edge, half a bit later, is
+--! correct. A chip at the end of a cable is not: the falling edge has to
+--! reach it and its answer has to come back, and on a PMOD cable to a
+--! Tiny Tapeout chip that round trip is about 30 ns against 24 ns of half
+--! bit. Each lane's capture can therefore be moved later by @c miso_delay
+--! fabric clocks: lane @e c captures on the rising-edge strobe delayed by
+--! the value in bits (c*3+2 downto c*3). The last bit of a word must be
+--! captured before CS rises and the word is handed on, which caps the
+--! delay at @c max_miso_delay (5 clocks at the default timing); larger
+--! settings are clamped. Zero, the default, is today's behaviour exactly.
+--!
 --! @par Generics
 --! - @c chip_count   chips on the bus, one MISO lane each (3)
 --! - @c ch_per_chip  amplifier channels per chip; higher channels are aux (32)
@@ -65,6 +78,8 @@
 --! - @c enable              low parks the bus; deasserting mid-sweep finishes the sweep
 --! - @c sclk, @c cs_n, @c mosi  broadcast SPI outputs
 --! - @c miso                one lane per chip, @c chip_count wide
+--! - @c miso_delay          per-lane MISO sample delay, three bits per lane
+--!                          (see "Sampling an external chip" below)
 --! - @c slot_valid, @c slot_channel, @c slot_data, @c slot_is_aux, @c slot_last
 --!                          the slot stream (see above)
 --! - @c ready               high once initialisation is complete; discard the
@@ -113,6 +128,11 @@ entity argus_rhd_spi_master is
     mosi : out   std_logic;
     miso : in    std_logic_vector(chip_count - 1 downto 0);
 
+    -- Per-lane MISO sample delay, in fabric clocks after the SCLK rising
+    -- edge: lane c in bits (c*3+2 downto c*3). Zero for chips inside the
+    -- fabric. See "Sampling an external chip" in the header.
+    miso_delay : in    std_logic_vector(chip_count * 3 - 1 downto 0) := (others => '0');
+
     -- Slot stream. One pulse per command slot that carried a conversion
     -- result. Lane c of slot_data occupies bits (c*16+15 downto c*16).
     slot_valid   : out   std_logic;
@@ -150,6 +170,11 @@ architecture rtl of argus_rhd_spi_master is
   -- and half, so neither phase is shorter than it has to be.
   constant sclk_low_phase : natural := sclk_div / 2;
 
+  -- The last bit's rising edge, and the most a lane's capture can be
+  -- delayed past it while still landing before CS rises at cs_stop + 1.
+  constant last_rise      : natural := sclk_stop - (sclk_div - 1 - sclk_low_phase);
+  constant max_miso_delay : natural := cs_stop - last_rise;
+
   type cmd_rom_t is array (natural range <>) of std_logic_vector(15 downto 0);
 
   function write_cmd (
@@ -171,6 +196,25 @@ architecture rtl of argus_rhd_spi_master is
     return OP_READ & std_logic_vector(to_unsigned(addr, 6)) & x"00";
 
   end function read_cmd;
+
+  function lane_delay (
+    delays : std_logic_vector;
+    lane   : natural
+  ) return natural is
+
+    variable d : natural;
+
+  begin
+
+    d := to_integer(unsigned(delays(delays'low + lane * 3 + 2 downto delays'low + lane * 3)));
+
+    if (d > max_miso_delay) then
+      return max_miso_delay;
+    end if;
+
+    return d;
+
+  end function lane_delay;
 
   function convert_cmd (
     ch : unsigned(5 downto 0)
@@ -284,6 +328,12 @@ architecture rtl of argus_rhd_spi_master is
   -- slot of a sweep, so the pad lands in the CS-high gap.
   signal slot_end : unsigned(15 downto 0);
 
+  -- MISO capture strobes. rise_now marks the clock SCLK rises on inside the
+  -- shifting window; rise_tap(k) is the same strobe k clocks later.
+  signal rise_now : std_logic;
+  signal rise_q   : std_logic_vector(max_miso_delay downto 1);
+  signal rise_tap : std_logic_vector(max_miso_delay downto 0);
+
 begin
 
   assert SCLK_DIV >= 4
@@ -324,6 +374,12 @@ begin
   slot_end <= to_unsigned(slot_clocks - 1 + sweep_pad, 16) when (state = st_run) and (seq_idx = sweep_slots - 1) else
               to_unsigned(slot_clocks - 1, 16);
 
+  rise_now <= '1' when (state /= st_idle) and (clk_cnt >= sclk_start) and (clk_cnt <= sclk_stop)
+                       and (phase = sclk_low_phase) else
+              '0';
+
+  rise_tap <= rise_q & rise_now;
+
   --------------------------------------------------------------------------
   -- Slot engine
   --------------------------------------------------------------------------
@@ -354,8 +410,10 @@ begin
         last_r    <= '0';
         aux_r     <= '0';
         ready_r   <= '0';
+        rise_q    <= (others => '0');
       else
         valid_r <= '0';
+        rise_q  <= rise_tap(max_miso_delay - 1 downto 0);
 
         case state is
 
@@ -401,15 +459,9 @@ begin
                 sclk_r <= '0';
                 mosi_r <= shift_out(15 - to_integer(bit_num));
               elsif (phase = sclk_low_phase) then
-                -- Rising edge: the slave samples MOSI, we sample MISO.
+                -- Rising edge: the slave samples MOSI. MISO is captured
+                -- below, on this edge or a few clocks after it.
                 sclk_r <= '1';
-
-                for c in 0 to chip_count - 1 loop
-
-                  capture(c * 16 + 15 downto c * 16) <= capture(c * 16 + 14 downto c * 16) & miso(c);
-
-                end loop;
-
               end if;
 
               if (phase = sclk_div - 1) then
@@ -419,6 +471,19 @@ begin
                 phase <= phase + 1;
               end if;
             end if;
+
+            --------------------------------------------------------------
+            -- MISO capture, per lane, on the rising-edge strobe delayed by
+            -- that lane's MISO_DELAY. At delay 0 this is the rising edge
+            -- itself, as it always was.
+            --------------------------------------------------------------
+            for c in 0 to chip_count - 1 loop
+
+              if (rise_tap(lane_delay(miso_delay, c)) = '1') then
+                capture(c * 16 + 15 downto c * 16) <= capture(c * 16 + 14 downto c * 16) & miso(c);
+              end if;
+
+            end loop;
 
             --------------------------------------------------------------
             -- CS hold, then CS high

@@ -11,12 +11,29 @@
 -- extractor keeps per-channel crossing counts and spike-band power per
 -- bin. Both expose a held, double-buffered bank to the register block.
 --
--- The chips are internal (Option B, simulated Intan). There are no external
--- SPI pins: the bus never leaves the fabric, so there is nothing to
--- constrain. Bring-up visibility comes from an ILA on the internal signals
--- rather than a scope. When real silicon arrives, a generic here selects
--- external MISO and routes the bus out to pins; the master and assembler
--- do not change.
+-- LANES
+--   Each of the chip_count MISO lanes has a source, set by LANE_SRC:
+--
+--     model  the simulated RHD2132 inside the fabric (the default)
+--     pins   an external chip on the spi_* ports, routed to PMOD JA
+--            (constraints/argus_pmod_ja.xdc)
+--     off    MISO held low; the lane reads zeros
+--
+--   The bus itself is broadcast: CS, SCLK and MOSI drive the internal chips
+--   and the pins at once, so an external chip sees exactly the sequence the
+--   models do. Only MISO is selected per lane. A lane switched to the pins
+--   keeps its model running, so the replay fetcher, which is driven by chip
+--   0's requests, works whatever lane 0's source is.
+--
+--   An external chip answers late: the SCLK edge has to reach it and its
+--   MISO has to come back. MISO_DELAY moves each lane's capture later to
+--   cover that (argus_rhd_spi_master, "Sampling an external chip"). The
+--   pin input is registered in an IOB flop first, so its timing does not
+--   depend on placement; the delay setting absorbs that one clock.
+--
+--   LANE_SRC and MISO_DELAY are latched while the chain is in reset, so a
+--   lane never changes source partway through a word. Set them under
+--   CTRL.soft_reset and release it.
 --
 -- SAMPLE SOURCE
 --   With CTRL.ext_mode clear the chips generate their built-in identity
@@ -88,7 +105,15 @@ entity argus_acq_top is
     bram_we   : out   std_logic_vector(3 downto 0);
     bram_addr : out   std_logic_vector(31 downto 0);
     bram_din  : out   std_logic_vector(31 downto 0);
-    bram_dout : in    std_logic_vector(31 downto 0)
+    bram_dout : in    std_logic_vector(31 downto 0);
+
+    -- SPI to external chips on PMOD JA: the same broadcast bus the internal
+    -- chips see, and one MISO per lane. Unused unless LANE_SRC selects the
+    -- pins for a lane.
+    spi_cs_n : out   std_logic;
+    spi_sclk : out   std_logic;
+    spi_mosi : out   std_logic;
+    spi_miso : in    std_logic_vector(chip_count - 1 downto 0)
   );
 end entity argus_acq_top;
 
@@ -112,6 +137,19 @@ architecture rtl of argus_acq_top is
   signal miso : std_logic_vector(chip_count - 1 downto 0);
 
   signal miso_oe : std_logic_vector(chip_count - 1 downto 0);
+
+  -- Lane sources. model_miso is what the internal chips drive, pin_miso_q
+  -- the external pins after the IOB register; miso, above, is the
+  -- selection the master sees.
+  signal model_miso   : std_logic_vector(chip_count - 1 downto 0);
+  signal pin_miso_q   : std_logic_vector(chip_count - 1 downto 0);
+  signal lane_src     : std_logic_vector(31 downto 0);
+  signal miso_delay   : std_logic_vector(31 downto 0);
+  signal lane_src_q   : std_logic_vector(chip_count * 2 - 1 downto 0);
+  signal miso_delay_q : std_logic_vector(chip_count * 3 - 1 downto 0);
+
+  attribute iob : string;
+  attribute iob of pin_miso_q : signal is "TRUE";
 
   signal ext_req : std_logic_vector(chip_count - 1 downto 0);
   signal ext_ch  : unsigned(5 downto 0);
@@ -145,6 +183,10 @@ architecture rtl of argus_acq_top is
   signal clear_underrun  : std_logic;
 
 begin
+
+  assert chip_count <= 10
+    report "LANE_SRC and MISO_DELAY are one 32-bit register each: at most 10 lanes"
+    severity failure;
 
   -- soft_reset is a registered output of the AXI block, so this is a
   -- synchronous reset for the chain.
@@ -194,6 +236,8 @@ begin
       replay_underrun => replay_underrun,
       ack_consumed    => ack_consumed,
       clear_underrun  => clear_underrun,
+      lane_src        => lane_src,
+      miso_delay      => miso_delay,
       rd_en           => rd_en,
       rd_addr         => rd_addr,
       rd_data         => rd_data,
@@ -224,6 +268,7 @@ begin
       cs_n         => cs_n,
       mosi         => mosi,
       miso         => miso,
+      miso_delay   => miso_delay_q,
       slot_valid   => slot_valid,
       slot_channel => slot_channel,
       slot_data    => slot_data,
@@ -252,7 +297,7 @@ begin
           sclk          => sclk,
           cs_n          => cs_n,
           mosi          => mosi,
-          miso          => miso(c),
+          miso          => model_miso(c),
           miso_oe       => miso_oe(c),
           ext_mode      => ext_mode,
           ext_req       => ext_req(c),
@@ -281,7 +326,7 @@ begin
           sclk          => sclk,
           cs_n          => cs_n,
           mosi          => mosi,
-          miso          => miso(c),
+          miso          => model_miso(c),
           miso_oe       => miso_oe(c),
           ext_mode      => ext_mode,
           ext_req       => ext_req(c),
@@ -296,6 +341,36 @@ begin
     end generate chipn;
 
   end generate chips;
+
+  --------------------------------------------------------------------------
+  -- Lanes: the pins, the latched configuration, and the MISO selection.
+  --------------------------------------------------------------------------
+
+  spi_cs_n <= cs_n;
+  spi_sclk <= sclk;
+  spi_mosi <= mosi;
+
+  lane_cfg : process (s_axi_aclk) is
+  begin
+
+    if rising_edge(s_axi_aclk) then
+      pin_miso_q <= spi_miso;
+
+      if (chain_rst_n = '0') then
+        lane_src_q   <= lane_src(chip_count * 2 - 1 downto 0);
+        miso_delay_q <= miso_delay(chip_count * 3 - 1 downto 0);
+      end if;
+    end if;
+
+  end process lane_cfg;
+
+  lanes : for c in 0 to chip_count - 1 generate
+
+    miso(c) <= model_miso(c) when lane_src_q(c * 2 + 1 downto c * 2) = "00" else
+               pin_miso_q(c) when lane_src_q(c * 2 + 1 downto c * 2) = "01" else
+               '0';
+
+  end generate lanes;
 
   fetcher : entity work.argus_sample_fetch(rtl)
     generic map (

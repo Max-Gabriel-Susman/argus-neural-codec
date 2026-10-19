@@ -34,7 +34,7 @@ Post-route timing at 125 MHz: WNS 0.924 ns, WHS 0.036 ns.
                               latest raw frame, held                 the codec, held
                                           │                                    │
                                           └────────► argus_acq_axi ◄───────────┘
-                                                     ACQ3 register block ──► M_AXI_GP0
+                                                     ACQ4 register block ──► M_AXI_GP0
 ```
 
 | file | role | numbers |
@@ -44,8 +44,8 @@ Post-route timing at 125 MHz: WNS 0.924 ns, WHS 0.036 ns.
 | `rtl/argus_sample_fetch.vhd` | Ext-mode source: plays samples out of two BRAM halves the PS refills; reports each half consumed and any underrun | 147 samples per half, 4.9 ms |
 | `rtl/argus_frame_assembler.vhd` | The latest complete raw frame, double-buffered; `hold` freezes the read bank so 96 AXI reads see one sweep | `FRAME_INDEX` = sweep number |
 | `rtl/argus_feature.vhd` | The codec (below) | 35 clocks per slot; one time-multiplexed datapath, three DSP48s |
-| `rtl/argus_acq_axi.vhd` | AXI4-Lite register block, revision ACQ3 | 4 KB, ID `0x41435133` |
-| `rtl/argus_acq_top.vhd` | The chain, instantiated in the block design as a module reference | ports: `s_axi_*`, `bram_*` |
+| `rtl/argus_acq_axi.vhd` | AXI4-Lite register block, revision ACQ4 | 4 KB, ID `0x41435134` |
+| `rtl/argus_acq_top.vhd` | The chain, instantiated in the block design as a module reference; selects each lane's MISO source | ports: `s_axi_*`, `bram_*`, `spi_*` |
 
 The block design (`neural_codec`) is the Zynq PS, an AXI interconnect, the
 module reference, and `axi_bram_ctrl` + `blk_mem_gen` at `0x40000000` for
@@ -96,18 +96,20 @@ feature bank with the same `hold`/`held` handshake as the frame; a bin that
 completes under a hold is deferred to the release, and `dropped` counts
 the rare case of two.
 
-## Register map (ACQ3)
+## Register map (ACQ4)
 
 | offset | name | | |
 | --- | --- | --- | --- |
 | `0x000` | `CTRL` | RW | bit 0 enable · 1 soft reset · 2 ext mode · 3 hold (frame) · 4 feat_hold |
 | `0x004` | `STATUS` | RO | bit 0 ready · 1 overrun · 2 held · 3 feat_held |
 | `0x008` | `FRAME_INDEX` | RO | sweep number of the frame in the read bank |
-| `0x00C` | `ID` | RO | `0x41435133` "ACQ3" — the firmware checks this first |
+| `0x00C` | `ID` | RO | `0x41435134` "ACQ4"; the firmware checks this first |
 | `0x010` | `REPLAY_STATUS` | RO | play half, consumed flags, underrun, row |
 | `0x014` | `REPLAY_ACK` | WO | clear consumed 0/1, clear underrun |
 | `0x018` | `FEATURE_INDEX` | RO | bins completed; the bank holds the latest |
 | `0x01C` | `FEAT_DROPPED` | RO | bins lost to a hold longer than one bin |
+| `0x020` | `LANE_SRC` | RW | two bits per lane: `00` internal model · `01` Pmod JA pins · `1x` off |
+| `0x024` | `MISO_DELAY` | RW | three bits per lane: fabric clocks to delay MISO capture, 0 to 5 |
 | `0x100`–`0x27C` | `FRAME[0..95]` | RO | one 16-bit sample in the low half of each word |
 | `0x400`–`0x6FC` | `FEATURE[0..95]` | RO | two words per channel: `sum[31:0]`, then `count[15:0]` over `sum[47:32]` |
 
@@ -119,7 +121,42 @@ The revision in `ID` is bumped whenever the map or the fabric's behaviour
 changes, and the firmware refuses to run against a revision it does not
 know: `acq id=… EXPECTED … -- stale bitstream?` at boot means the platform
 was not rebuilt after a gateware change. ACQ1 was the original chain, ACQ2
-added the held frame read, ACQ3 the feature bank.
+added the held frame read, ACQ3 the feature bank, ACQ4 the lane sources.
+
+## External chips on Pmod JA
+
+Each of the three MISO lanes can come from the chip model inside the fabric
+(the default), from a real chip on Pmod JA, or be switched off. The bus is
+broadcast, so an external chip sees exactly the command sequence the models
+do, and a lane on the pins sits in the same frame as lanes still on the
+models.
+
+| Pmod JA | signal | | Pmod JA | signal |
+| --- | --- | --- | --- | --- |
+| 1 | `CS_n` | | 7 | `MISO1` |
+| 2 | `MOSI` | | 8 | `MISO2` |
+| 3 | `MISO0` | | 9 | not connected |
+| 4 | `SCLK` | | 10 | not connected |
+| 5, 11 | GND | | 6, 12 | 3.3 V |
+
+The top row is the Digilent Pmod SPI layout, so a one-chip board or another
+FPGA's SPI Pmod lines up pin for pin. Signals are 3.3 V LVCMOS, SCLK runs at
+20.8 MHz, and unconnected MISO pins are pulled down
+(`constraints/argus_pmod_ja.xdc`).
+
+A chip at the end of a cable answers late: the SCLK edge has to reach it
+and its MISO has to come back. `MISO_DELAY` moves a lane's capture later, in
+8 ns steps, to cover that round trip. In simulation, an external chip behind
+28 ns of delay reads wrong at settings 0 to 2 and clean at 3 to 5
+(`tb_argus_acq_top`, step 8). On hardware, run the same sweep and pick the
+middle of the settings that read clean. Both registers are applied when the
+chain leaves reset, so set them under `CTRL.soft_reset`. The firmware does
+this at boot from `ARGUS_LANE_SRC` and `ARGUS_MISO_DELAY`.
+
+Adding the `spi_*` ports changed `argus_acq_top`'s port list, so the block
+design needs `tools/bd_add_pins.tcl` once (it recreates the module cell,
+restores its connections, makes the ports external and adds the
+constraints) before `tools/build_bitstream.tcl`.
 
 ## Building
 
@@ -143,8 +180,10 @@ the result on the board.
 
 A change to `argus_acq_top`'s ports (not its internals) is the one thing
 `update_module_reference` cannot do; the module has to be removed from the
-block design and re-added, as `tools/bd_add_bram.tcl` does. Internal
-changes, including new entities, need only the build script.
+block design and re-added, as `tools/bd_add_bram.tcl` and
+`tools/bd_add_pins.tcl` do. Internal changes, including new entities, need
+only the build script. The build script also adds any `constraints/*.xdc`
+the project does not have yet.
 
 ## Simulating
 
