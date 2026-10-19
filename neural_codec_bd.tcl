@@ -235,6 +235,10 @@ proc create_root_design { parentCell } {
 
 
   # Create ports
+  set spi_cs_n [ create_bd_port -dir O spi_cs_n ]
+  set spi_sclk [ create_bd_port -dir O spi_sclk ]
+  set spi_mosi [ create_bd_port -dir O spi_mosi ]
+  set spi_miso [ create_bd_port -dir I -from 2 -to 0 spi_miso ]
 
   # Create instance: processing_system7_0, and set properties
   set processing_system7_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0 ]
@@ -773,17 +777,6 @@ proc create_root_design { parentCell } {
   # Create instance: rst_ps7_0_125M, and set properties
   set rst_ps7_0_125M [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_ps7_0_125M ]
 
-  # Create instance: argus_acq_top_0, and set properties
-  set block_name argus_acq_top
-  set block_cell_name argus_acq_top_0
-  if { [catch {set argus_acq_top_0 [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
-     catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
-     return 1
-   } elseif { $argus_acq_top_0 eq "" } {
-     catch {common::send_gid_msg -ssname BD::TCL -id 2096 -severity "ERROR" "Unable to referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
-     return 1
-   }
-  
   # Create instance: axi_bram_ctrl_0, and set properties
   set axi_bram_ctrl_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_0 ]
   set_property -dict [list \
@@ -802,6 +795,17 @@ proc create_root_design { parentCell } {
   ] $blk_mem_gen_0
 
 
+  # Create instance: argus_acq_top_0, and set properties
+  set block_name argus_acq_top
+  set block_cell_name argus_acq_top_0
+  if { [catch {set argus_acq_top_0 [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
+     catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
+     return 1
+   } elseif { $argus_acq_top_0 eq "" } {
+     catch {common::send_gid_msg -ssname BD::TCL -id 2096 -severity "ERROR" "Unable to referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
+     return 1
+   }
+  
   # Create interface connections
   connect_bd_intf_net -intf_net axi_bram_ctrl_0_BRAM_PORTA [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
   connect_bd_intf_net -intf_net processing_system7_0_DDR [get_bd_intf_ports DDR] [get_bd_intf_pins processing_system7_0/DDR]
@@ -823,6 +827,12 @@ proc create_root_design { parentCell } {
   [get_bd_pins blk_mem_gen_0/rstb]
   connect_bd_net -net argus_acq_top_0_bram_we  [get_bd_pins argus_acq_top_0/bram_we] \
   [get_bd_pins blk_mem_gen_0/web]
+  connect_bd_net -net argus_acq_top_0_spi_cs_n  [get_bd_pins argus_acq_top_0/spi_cs_n] \
+  [get_bd_ports spi_cs_n]
+  connect_bd_net -net argus_acq_top_0_spi_mosi  [get_bd_pins argus_acq_top_0/spi_mosi] \
+  [get_bd_ports spi_mosi]
+  connect_bd_net -net argus_acq_top_0_spi_sclk  [get_bd_pins argus_acq_top_0/spi_sclk] \
+  [get_bd_ports spi_sclk]
   connect_bd_net -net blk_mem_gen_0_doutb  [get_bd_pins blk_mem_gen_0/doutb] \
   [get_bd_pins argus_acq_top_0/bram_dout]
   connect_bd_net -net processing_system7_0_FCLK_CLK0  [get_bd_pins processing_system7_0/FCLK_CLK0] \
@@ -831,18 +841,20 @@ proc create_root_design { parentCell } {
   [get_bd_pins rst_ps7_0_125M/slowest_sync_clk] \
   [get_bd_pins ps7_0_axi_periph/M00_ACLK] \
   [get_bd_pins ps7_0_axi_periph/ACLK] \
-  [get_bd_pins argus_acq_top_0/s_axi_aclk] \
   [get_bd_pins axi_bram_ctrl_0/s_axi_aclk] \
-  [get_bd_pins ps7_0_axi_periph/M01_ACLK]
+  [get_bd_pins ps7_0_axi_periph/M01_ACLK] \
+  [get_bd_pins argus_acq_top_0/s_axi_aclk]
   connect_bd_net -net processing_system7_0_FCLK_RESET0_N  [get_bd_pins processing_system7_0/FCLK_RESET0_N] \
   [get_bd_pins rst_ps7_0_125M/ext_reset_in]
   connect_bd_net -net rst_ps7_0_125M_peripheral_aresetn  [get_bd_pins rst_ps7_0_125M/peripheral_aresetn] \
   [get_bd_pins ps7_0_axi_periph/S00_ARESETN] \
   [get_bd_pins ps7_0_axi_periph/M00_ARESETN] \
   [get_bd_pins ps7_0_axi_periph/ARESETN] \
-  [get_bd_pins argus_acq_top_0/s_axi_aresetn] \
   [get_bd_pins axi_bram_ctrl_0/s_axi_aresetn] \
-  [get_bd_pins ps7_0_axi_periph/M01_ARESETN]
+  [get_bd_pins ps7_0_axi_periph/M01_ARESETN] \
+  [get_bd_pins argus_acq_top_0/s_axi_aresetn]
+  connect_bd_net -net spi_miso_1  [get_bd_ports spi_miso] \
+  [get_bd_pins argus_acq_top_0/spi_miso]
 
   # Create address segments
   assign_bd_address -offset 0x43C00000 -range 0x00001000 -target_address_space [get_bd_addr_spaces processing_system7_0/Data] [get_bd_addr_segs argus_acq_top_0/s_axi/reg0] -force

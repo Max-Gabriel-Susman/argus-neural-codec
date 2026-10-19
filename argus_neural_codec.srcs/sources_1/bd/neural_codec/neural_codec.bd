@@ -1,7 +1,7 @@
 {
   "design": {
     "design_info": {
-      "boundary_crc": "0xCC6CFA53B4580162",
+      "boundary_crc": "0xB55C26D1312C29FD",
       "device": "xc7z020clg400-1",
       "gen_directory": "../../../../argus_neural_codec.gen/sources_1/bd/neural_codec",
       "name": "neural_codec",
@@ -21,9 +21,9 @@
         "m01_couplers": {}
       },
       "rst_ps7_0_125M": "",
-      "argus_acq_top_0": "",
       "axi_bram_ctrl_0": "",
-      "blk_mem_gen_0": ""
+      "blk_mem_gen_0": "",
+      "argus_acq_top_0": ""
     },
     "interface_ports": {
       "DDR": {
@@ -205,6 +205,22 @@
             "direction": "IO"
           }
         }
+      }
+    },
+    "ports": {
+      "spi_cs_n": {
+        "direction": "O"
+      },
+      "spi_sclk": {
+        "direction": "O"
+      },
+      "spi_mosi": {
+        "direction": "O"
+      },
+      "spi_miso": {
+        "direction": "I",
+        "left": "2",
+        "right": "0"
       }
     },
     "components": {
@@ -2434,11 +2450,69 @@
         "inst_hier_path": "rst_ps7_0_125M",
         "has_run_ip_tcl": "true"
       },
+      "axi_bram_ctrl_0": {
+        "vlnv": "xilinx.com:ip:axi_bram_ctrl:4.1",
+        "ip_revision": "14",
+        "xci_name": "neural_codec_axi_bram_ctrl_0_0",
+        "xci_path": "ip/neural_codec_axi_bram_ctrl_0_0/neural_codec_axi_bram_ctrl_0_0.xci",
+        "inst_hier_path": "axi_bram_ctrl_0",
+        "has_run_ip_tcl": "true",
+        "parameters": {
+          "PROTOCOL": {
+            "value": "AXI4LITE"
+          },
+          "SINGLE_PORT_BRAM": {
+            "value": "1"
+          }
+        },
+        "interface_ports": {
+          "S_AXI": {
+            "bd_attributes": {
+              "FUNCTION": {
+                "value": "BRAM_CTRL",
+                "value_src": "default"
+              }
+            }
+          }
+        },
+        "hdl_attributes": {
+          "BMM_INFO_ADDRESS_SPACE": {
+            "value": "byte  0x40000000 32 > neural_codec blk_mem_gen_0",
+            "value_src": "default"
+          },
+          "KEEP_HIERARCHY": {
+            "value": "yes",
+            "value_src": "default"
+          }
+        }
+      },
+      "blk_mem_gen_0": {
+        "vlnv": "xilinx.com:ip:blk_mem_gen:8.4",
+        "ip_revision": "13",
+        "xci_name": "neural_codec_blk_mem_gen_0_0",
+        "xci_path": "ip/neural_codec_blk_mem_gen_0_0/neural_codec_blk_mem_gen_0_0.xci",
+        "inst_hier_path": "blk_mem_gen_0",
+        "has_run_ip_tcl": "true",
+        "parameters": {
+          "Enable_B": {
+            "value": "Use_ENB_Pin"
+          },
+          "Memory_Type": {
+            "value": "True_Dual_Port_RAM"
+          },
+          "Use_RSTB_Pin": {
+            "value": "true"
+          },
+          "use_bram_block": {
+            "value": "BRAM_Controller"
+          }
+        }
+      },
       "argus_acq_top_0": {
         "vlnv": "xilinx.com:module_ref:argus_acq_top:1.0",
         "ip_revision": "1",
-        "xci_name": "neural_codec_argus_acq_top_0_0",
-        "xci_path": "ip/neural_codec_argus_acq_top_0_0/neural_codec_argus_acq_top_0_0.xci",
+        "xci_name": "neural_codec_argus_acq_top_0_1",
+        "xci_path": "ip/neural_codec_argus_acq_top_0_1/neural_codec_argus_acq_top_0_1.xci",
         "inst_hier_path": "argus_acq_top_0",
         "has_run_ip_tcl": "true",
         "reference_info": {
@@ -2721,64 +2795,20 @@
             "direction": "I",
             "left": "31",
             "right": "0"
-          }
-        }
-      },
-      "axi_bram_ctrl_0": {
-        "vlnv": "xilinx.com:ip:axi_bram_ctrl:4.1",
-        "ip_revision": "14",
-        "xci_name": "neural_codec_axi_bram_ctrl_0_0",
-        "xci_path": "ip/neural_codec_axi_bram_ctrl_0_0/neural_codec_axi_bram_ctrl_0_0.xci",
-        "inst_hier_path": "axi_bram_ctrl_0",
-        "has_run_ip_tcl": "true",
-        "parameters": {
-          "PROTOCOL": {
-            "value": "AXI4LITE"
           },
-          "SINGLE_PORT_BRAM": {
-            "value": "1"
-          }
-        },
-        "interface_ports": {
-          "S_AXI": {
-            "bd_attributes": {
-              "FUNCTION": {
-                "value": "BRAM_CTRL",
-                "value_src": "default"
-              }
-            }
-          }
-        },
-        "hdl_attributes": {
-          "BMM_INFO_ADDRESS_SPACE": {
-            "value": "byte  0x40000000 32 > neural_codec blk_mem_gen_0",
-            "value_src": "default"
+          "spi_cs_n": {
+            "direction": "O"
           },
-          "KEEP_HIERARCHY": {
-            "value": "yes",
-            "value_src": "default"
-          }
-        }
-      },
-      "blk_mem_gen_0": {
-        "vlnv": "xilinx.com:ip:blk_mem_gen:8.4",
-        "ip_revision": "13",
-        "xci_name": "neural_codec_blk_mem_gen_0_0",
-        "xci_path": "ip/neural_codec_blk_mem_gen_0_0/neural_codec_blk_mem_gen_0_0.xci",
-        "inst_hier_path": "blk_mem_gen_0",
-        "has_run_ip_tcl": "true",
-        "parameters": {
-          "Enable_B": {
-            "value": "Use_ENB_Pin"
+          "spi_sclk": {
+            "direction": "O"
           },
-          "Memory_Type": {
-            "value": "True_Dual_Port_RAM"
+          "spi_mosi": {
+            "direction": "O"
           },
-          "Use_RSTB_Pin": {
-            "value": "true"
-          },
-          "use_bram_block": {
-            "value": "BRAM_Controller"
+          "spi_miso": {
+            "direction": "I",
+            "left": "2",
+            "right": "0"
           }
         }
       }
@@ -2858,6 +2888,24 @@
           "blk_mem_gen_0/web"
         ]
       },
+      "argus_acq_top_0_spi_cs_n": {
+        "ports": [
+          "argus_acq_top_0/spi_cs_n",
+          "spi_cs_n"
+        ]
+      },
+      "argus_acq_top_0_spi_mosi": {
+        "ports": [
+          "argus_acq_top_0/spi_mosi",
+          "spi_mosi"
+        ]
+      },
+      "argus_acq_top_0_spi_sclk": {
+        "ports": [
+          "argus_acq_top_0/spi_sclk",
+          "spi_sclk"
+        ]
+      },
       "blk_mem_gen_0_doutb": {
         "ports": [
           "blk_mem_gen_0/doutb",
@@ -2892,6 +2940,12 @@
           "axi_bram_ctrl_0/s_axi_aresetn",
           "ps7_0_axi_periph/M01_ARESETN",
           "argus_acq_top_0/s_axi_aresetn"
+        ]
+      },
+      "spi_miso_1": {
+        "ports": [
+          "spi_miso",
+          "argus_acq_top_0/spi_miso"
         ]
       }
     },
