@@ -1,113 +1,74 @@
 # tools/bd_add_pins.tcl
 #
 # Brings argus_acq_top's spi_* ports out of the neural_codec block design to
-# Pmod JA, for an external chip on a lane (LANE_SRC = pins). Source from the
-# Vivado Tcl console with the project open:
+# Pmod JA, for an external chip on a lane (LANE_SRC = pins). Headless, from
+# the repository root:
 #
-#   source /home/prometheus/Documents/argus-neural-codec/tools/bd_add_pins.tcl
+#   vivado -mode batch -source tools/bd_add_pins.tcl argus_neural_codec.xpr
 #
-# Then tools/build_bitstream.tcl as before.
+# or from the Vivado Tcl console with the project open. Then
+# tools/build_bitstream.tcl as before. Safe to run again: ports and nets
+# that already exist are left alone.
 #
-# WHY THIS RECREATES THE MODULE CELL
-#   Same reason as tools/bd_add_bram.tcl: the port list changed, and
-#   update_module_reference compares against a cached elaboration it does
-#   not invalidate. The cell is deleted, its source re-added, the cell
-#   recreated, and every connection it had -- S_AXI, its address, and BRAM
-#   port B -- restored before the new ports are made external.
+# WHY update_module_reference AND NOT DELETE/RE-ADD
+#   The first version of this script deleted the cell, removed and re-added
+#   argus_acq_top.vhd, and recreated the cell, as bd_add_bram.tcl once did.
+#   On Vivado 2026.1 that recreated cell came back from the cached
+#   elaboration, without the new spi_* pins ("IP ... is restricted: Detected
+#   changes to module reference file(s)"). update_module_reference, run by
+#   build_bitstream.tcl straight afterwards, did pick them up ("Upgrade has
+#   added port 'spi_cs_n'" ...) and kept every existing connection: S_AXI,
+#   its address, BRAM port B. So this script does that, and only adds what
+#   the upgrade cannot: the external ports, their nets, and the XDC.
 
-set repo    [get_property DIRECTORY [current_project]]
-set top_src $repo/rtl/argus_acq_top.vhd
-set xdc     $repo/constraints/argus_pmod_ja.xdc
+set repo [get_property DIRECTORY [current_project]]
+set xdc  $repo/constraints/argus_pmod_ja.xdc
+set cell argus_acq_top_0
 
 open_bd_design [get_files neural_codec.bd]
 
-# -- 1. Every RTL file in the project (see bd_add_bram.tcl, step 1).
-foreach f [glob $repo/rtl/*.vhd] {
-  if {[get_files -quiet [file tail $f]] eq ""} {
-    add_files -norecurse $f
+# -- 1. Re-elaborate the module reference so the cell grows the new pins.
+#       The IP name is the cell's, not a fixed string: a recreated cell may
+#       have become neural_codec_argus_acq_top_0_1.
+set acq_ip [get_property -quiet CONFIG.Component_Name [get_bd_cells $cell]]
+if {$acq_ip eq ""} {
+  set acq_ip [lindex [get_ips -quiet *argus_acq_top*] 0]
+}
+update_module_reference $acq_ip
+
+if {[get_bd_pins -quiet $cell/spi_sclk] eq ""} {
+  error "$cell still has no spi_* pins after update_module_reference.\
+         Paste the output of 'get_bd_pins $cell/*'."
+}
+
+# -- 2. The external ports, under the names the XDC uses, each connected
+#       only if its cell pin is not already on a net.
+proc argus_connect_port {port pin} {
+  if {[get_bd_nets -quiet -of_objects [get_bd_pins $pin]] eq ""} {
+    connect_bd_net [get_bd_ports $port] [get_bd_pins $pin]
   }
 }
 
-# -- 2. Force re-elaboration of argus_acq_top.
-if {[get_bd_cells -quiet argus_acq_top_0] ne ""} {
-  delete_bd_objs [get_bd_cells argus_acq_top_0]
-}
-
-remove_files [get_files $top_src]
-add_files -norecurse $top_src
-update_compile_order -fileset sources_1
-
-create_bd_cell -type module -reference argus_acq_top argus_acq_top_0
-
-if {[get_bd_pins -quiet argus_acq_top_0/spi_sclk] eq ""} {
-  error "argus_acq_top_0 has no spi_* pins after re-adding the source.\
-         Vivado is not parsing the new entity. Paste the output of\
-         'get_bd_pins argus_acq_top_0/*'."
-}
-
-if {[get_bd_intf_pins -quiet argus_acq_top_0/bram_clk] ne ""} {
-  set_property CONFIG.FREQ_HZ 125000000 [get_bd_intf_pins argus_acq_top_0/bram_clk]
-}
-
-# -- 3. S_AXI back onto the existing interconnect, and the address pinned.
-apply_bd_automation -rule xilinx.com:bd_rule:axi4 \
-  -config {
-    Clk_master {Auto}
-    Clk_slave  {Auto}
-    Clk_xbar   {Auto}
-    Master     {/processing_system7_0/M_AXI_GP0}
-    Slave      {/argus_acq_top_0/S_AXI}
-    ddr_seg    {Auto}
-    intc_ip    {/ps7_0_axi_periph}
-    master_apm {0}
-  } \
-  [get_bd_intf_pins argus_acq_top_0/S_AXI]
-
-set acq_seg [get_bd_addr_segs \
-              -of_objects [get_bd_addr_spaces processing_system7_0/Data] \
-              -filter {NAME =~ "*argus_acq_top*"}]
-set_property offset 0x43C00000 $acq_seg
-set_property range  4K         $acq_seg
-
-# -- 4. BRAM port B back to the replay memory.
-if {[get_bd_intf_pins -quiet argus_acq_top_0/bram] ne ""} {
-  connect_bd_intf_net [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTB] \
-                      [get_bd_intf_pins argus_acq_top_0/bram]
-} else {
-  foreach {mine theirs} {
-    bram_clk  clkb
-    bram_rst  rstb
-    bram_en   enb
-    bram_we   web
-    bram_addr addrb
-    bram_din  dinb
-    bram_dout doutb
-  } {
-    connect_bd_net [get_bd_pins argus_acq_top_0/$mine] [get_bd_pins blk_mem_gen_0/$theirs]
-  }
-}
-
-# -- 5. The new ports, external, under the names the XDC uses.
 foreach p {spi_cs_n spi_sclk spi_mosi} {
   if {[get_bd_ports -quiet $p] eq ""} {
     create_bd_port -dir O $p
   }
-  connect_bd_net [get_bd_ports $p] [get_bd_pins argus_acq_top_0/$p]
+  argus_connect_port $p $cell/$p
 }
 
-set w [get_property LEFT [get_bd_pins argus_acq_top_0/spi_miso]]
+set w [get_property LEFT [get_bd_pins $cell/spi_miso]]
 if {[get_bd_ports -quiet spi_miso] eq ""} {
   create_bd_port -dir I -from $w -to 0 spi_miso
 }
-connect_bd_net [get_bd_ports spi_miso] [get_bd_pins argus_acq_top_0/spi_miso]
+argus_connect_port spi_miso $cell/spi_miso
 
-# -- 6. The constraints, once.
+# -- 3. The constraints, once.
 if {[get_files -quiet -of_objects [get_filesets constrs_1] $xdc] eq ""} {
   add_files -fileset constrs_1 -norecurse $xdc
 }
 
-# -- 7. Validate, save, regenerate. The wrapper now has external ports, so
-#       it must be remade for synthesis to see them.
+# -- 4. Validate, save, regenerate. The wrapper gains the external ports,
+#       so it must be remade for synthesis to see them.
 validate_bd_design
 save_bd_design
 generate_target all [get_files neural_codec.bd]
@@ -116,9 +77,7 @@ update_compile_order -fileset sources_1
 write_bd_tcl -force $repo/neural_codec_bd.tcl
 
 puts ""
-puts "argus_acq_top_0 at [get_property offset $acq_seg]; spi_* external on Pmod JA"
-puts "External ports: [get_bd_ports]"
-puts ""
-puts "Review the diagram -- spi_cs_n, spi_sclk, spi_mosi out, spi_miso\[$w:0\] in -- then:"
-puts "  source $repo/tools/build_bitstream.tcl"
+puts "External ports: [lsort [get_bd_ports]]"
+puts "Expect spi_cs_n, spi_sclk, spi_mosi out and spi_miso\[$w:0\] in among them. Then:"
+puts "  vivado -mode batch -source tools/build_bitstream.tcl argus_neural_codec.xpr"
 puts ""

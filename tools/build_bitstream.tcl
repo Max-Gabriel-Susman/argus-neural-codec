@@ -56,11 +56,24 @@ foreach f [glob -nocomplain $repo/constraints/*.xdc] {
 #        the only tell was WNS/WHS identical to the previous build. This
 #        forces the OOC run to re-read rtl/ every build.
 #
-#        Internal changes only. A port-list change still needs the
-#        delete/re-add sequence in bd_add_bram.tcl: update_module_reference
-#        compares against a cached elaboration it does not invalidate.
-update_module_reference neural_codec_argus_acq_top_0_0
+#        On 2026.1 this also picks up port-list changes (it added the
+#        spi_* pins when they first appeared), but it leaves new pins
+#        unconnected: making them external is tools/bd_add_pins.tcl's job.
+set acq_ip [get_property -quiet CONFIG.Component_Name [get_bd_cells argus_acq_top_0]]
+if {$acq_ip eq ""} {
+  set acq_ip [lindex [get_ips -quiet *argus_acq_top*] 0]
+}
+update_module_reference $acq_ip
 save_bd_design
+
+# -- 0c. Refuse a build whose SPI pins never reach the package. Without this
+#        the build succeeds with spi_miso tied to zero and the XDC matching
+#        nothing, and the only sign is a page of critical warnings.
+if {[get_bd_pins -quiet argus_acq_top_0/spi_sclk] ne ""
+    && [get_bd_ports -quiet spi_sclk] eq ""} {
+  error "argus_acq_top_0 has spi_* pins but the block design does not bring\
+         them out. Run tools/bd_add_pins.tcl first."
+}
 
 # -- 1. Full flow through bitstream. reset_run first so a stale synth_1 from
 #       the PS7-only design cannot be reused.
