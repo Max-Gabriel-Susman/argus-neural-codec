@@ -27,27 +27,38 @@
 --! @c tb_argus_rhd_spi_master).
 --!
 --! @par Timing (125 MHz clk, 8 ns)
---! - @c sclk_div 5    -> 25 MHz SCLK, at the datasheet tSCLK floor
---! - 16 SCLK periods  -> 80 clocks of shifting
---! - @c slot_clocks 119 -> 125e6 / (119 * 35) = 30.01 kS/s per channel
---! - CS high 33 clocks = 264 ns, against a 154 ns tCSOFF minimum
+--! - @c sclk_div 6      -> 48 ns SCLK, 24 ns high and 24 ns low, against
+--!                         the RHD2000's 41.6 ns and 20.8 ns minimums
+--! - 16 SCLK periods    -> 96 clocks of shifting
+--! - @c slot_clocks 122 -> CS high 20 clocks = 160 ns, against 154 ns tCSOFF
+--! - 34 slots + @c sweep_pad 17 -> 4165 clocks per sweep,
+--!                         125e6 / 4165 = 30.01 kS/s per channel
+--!
+--! The sweep length, not the slot length, sets the sample rate, and it is
+--! held at 4165 clocks so every bin length, filter coefficient and golden
+--! file elsewhere stays valid. An earlier version ran @c sclk_div 5, a
+--! 40 ns SCLK with a 16 ns high phase, which the RHD2000 does not
+--! guarantee to read; @c sweep_pad is what made the slower SCLK fit.
 --!
 --! Slot layout by @c clk_cnt: 0..2 CS low, MOSI holds bit 15 (tCS1);
---! 3..82 sixteen SCLK periods of @c sclk_div clocks; 83..85 CS hold (tCS2);
---! 86..118 CS high (tCSOFF). Within a bit period SCLK is low for three
---! clocks and high for two; MOSI updates on the falling edge and MISO is
---! sampled on the rising edge (SPI mode 0). Bit phase and bit number are
---! tracked by two small counters rather than derived from @c clk_cnt with
---! mod and division: @c sclk_div is not a power of two, and the dividers
---! that produced landed on the critical path.
+--! 3..98 sixteen SCLK periods of @c sclk_div clocks; 99..101 CS hold
+--! (tCS2); 102..121 CS high (tCSOFF). The last slot of each sweep runs
+--! @c sweep_pad clocks longer, all of it CS high. Within a bit period SCLK
+--! is low for the first half and high for the second; MOSI updates on the
+--! falling edge and MISO is sampled on the rising edge (SPI mode 0). Bit
+--! phase and bit number are tracked by two small counters rather than
+--! derived from @c clk_cnt with mod and division: @c sclk_div is not a
+--! power of two, and the dividers that produced landed on the critical
+--! path.
 --!
 --! @par Generics
 --! - @c chip_count   chips on the bus, one MISO lane each (3)
 --! - @c ch_per_chip  amplifier channels per chip; higher channels are aux (32)
---! - @c aux_slots    auxiliary command slots per sweep (3)
---! - @c slot_clocks  clocks per command slot; sets the sample rate with the
---!                   sweep length, rate = clk / (slot_clocks * (ch_per_chip + aux_slots)) (119)
---! - @c sclk_div     clocks per SCLK period, 4..16 (5)
+--! - @c aux_slots    auxiliary command slots per sweep (2)
+--! - @c slot_clocks  clocks per command slot (122)
+--! - @c sclk_div     clocks per SCLK period, 4..16 (6)
+--! - @c sweep_pad    extra CS-high clocks at the end of each sweep (17);
+--!                   rate = clk / (slot_clocks * (ch_per_chip + aux_slots) + sweep_pad)
 --!
 --! @par Ports
 --! - @c clk, @c rst_n       fabric clock and active-low reset
@@ -75,15 +86,18 @@ entity argus_rhd_spi_master is
     chip_count : natural := 3;
     -- Amplifier channels per chip. Channels at or above this are auxiliary.
     ch_per_chip : natural := 32;
-    -- Auxiliary command slots appended to each sweep. Intan's recommended
-    -- sequence is 32 conversions plus 3 auxiliary commands.
-    aux_slots : natural := 3;
-    -- Clocks per command slot. Sets the sample rate together with the sweep
-    -- length: rate = CLK / (SLOT_CLOCKS * (CH_PER_CHIP + AUX_SLOTS)).
-    slot_clocks : natural := 119;
+    -- Auxiliary command slots appended to each sweep. Intan recommends 32
+    -- conversions plus 3 auxiliary commands; two fit the 4165-clock sweep at
+    -- a datasheet-compliant SCLK, and Argus does not read the aux inputs.
+    aux_slots : natural := 2;
+    -- Clocks per command slot.
+    slot_clocks : natural := 122;
     -- Clocks per SCLK period. Must be at least 4 for the slave-side edge
     -- detection to resolve both edges, and at most 16 for the phase counter.
-    sclk_div : natural := 5
+    sclk_div : natural := 6;
+    -- Extra CS-high clocks appended to the last slot of every sweep, so the
+    -- sweep length can be set independently of the slot length.
+    sweep_pad : natural := 17
   );
   port (
     clk   : in    std_logic;
@@ -132,8 +146,9 @@ architecture rtl of argus_rhd_spi_master is
   constant cs_stop         : natural := sclk_stop + cs_hold_clocks;
 
   -- SCLK is low for the first LOW_PHASE clocks of each bit period, high for
-  -- the rest. MOSI updates at offset 0, MISO is sampled at LOW_PHASE.
-  constant sclk_low_phase : natural := sclk_div - 2;
+  -- the rest. MOSI updates at offset 0, MISO is sampled at LOW_PHASE. Half
+  -- and half, so neither phase is shorter than it has to be.
+  constant sclk_low_phase : natural := sclk_div / 2;
 
   type cmd_rom_t is array (natural range <>) of std_logic_vector(15 downto 0);
 
@@ -265,6 +280,10 @@ architecture rtl of argus_rhd_spi_master is
   signal next_ch  : unsigned(5 downto 0);
   signal next_cv  : std_logic;
 
+  -- Last clk_cnt of the current slot: SWEEP_PAD clocks later on the last
+  -- slot of a sweep, so the pad lands in the CS-high gap.
+  signal slot_end : unsigned(15 downto 0);
+
 begin
 
   assert SCLK_DIV >= 4
@@ -301,6 +320,9 @@ begin
     end if;
 
   end process next_command;
+
+  slot_end <= to_unsigned(slot_clocks - 1 + sweep_pad, 16) when (state = st_run) and (seq_idx = sweep_slots - 1) else
+              to_unsigned(slot_clocks - 1, 16);
 
   --------------------------------------------------------------------------
   -- Slot engine
@@ -432,7 +454,7 @@ begin
             --------------------------------------------------------------
             -- Slot boundary: advance the sequencer.
             --------------------------------------------------------------
-            if (clk_cnt = slot_clocks - 1) then
+            if (clk_cnt = slot_end) then
               clk_cnt <= (others => '0');
 
               if (state = st_init) then
