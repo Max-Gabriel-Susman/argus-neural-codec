@@ -16,7 +16,7 @@
 --   write port. Writing one lane per clock over the following CHIP_COUNT
 --   clocks keeps the buffer a simple single-port memory and lets the
 --   electrode map permute arbitrarily across chip boundaries -- which
---   per-chip buffers would forbid. There are SLOT_CLOCKS (119) clocks
+--   per-chip buffers would forbid. There are SLOT_CLOCKS (122) clocks
 --   between slots and only CHIP_COUNT (3) writes to make, so the margin is
 --   large; overrun is still flagged rather than assumed impossible.
 --

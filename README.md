@@ -26,7 +26,7 @@ Post-route timing at 125 MHz: WNS 0.924 ns, WHS 0.036 ns.
                                    (identity pattern otherwise)   │              │
                                                                   ▼              │
                                                        argus_rhd_spi_master      │
-                                                       35 slots/sweep, 119 clk   │
+                                                       34 slots/sweep, 122 clk   │
                                                                   │ slot stream  │
                                           ┌───────────────────────┴────────────┐ │
                                           ▼                                    ▼ │
@@ -40,7 +40,7 @@ Post-route timing at 125 MHz: WNS 0.924 ns, WHS 0.036 ns.
 | file | role | numbers |
 | --- | --- | --- |
 | `rtl/argus_rhd2132_model.vhd` | RHD2132 chip model: register-accurate SPI behaviour, the ADC pipeline delay, a per-channel identity pattern, or samples from the fetcher in ext mode | 32 channels, 16-bit |
-| `rtl/argus_rhd_spi_master.vhd` | The SPI master the real headstage would see: 32 amplifier slots and 3 aux slots per sweep, three chips on parallel MISO lanes | 119 clocks per slot, 30,012 sweeps/s at 125 MHz |
+| `rtl/argus_rhd_spi_master.vhd` | The SPI master the real headstage would see: 32 amplifier slots and 2 aux slots per sweep, three chips on parallel MISO lanes, SPI timing within the RHD2000 datasheet | 122 clocks per slot plus a 17-clock sweep pad, 4165 clocks per sweep, 30,012 sweeps/s at 125 MHz |
 | `rtl/argus_sample_fetch.vhd` | Ext-mode source: plays samples out of two BRAM halves the PS refills; reports each half consumed and any underrun | 147 samples per half, 4.9 ms |
 | `rtl/argus_frame_assembler.vhd` | The latest complete raw frame, double-buffered; `hold` freezes the read bank so 96 AXI reads see one sweep | `FRAME_INDEX` = sweep number |
 | `rtl/argus_feature.vhd` | The codec (below) | 35 clocks per slot; one time-multiplexed datapath, three DSP48s |

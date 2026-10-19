@@ -8,7 +8,7 @@
 -- request from chip 0 stands for all of them. The fetcher reads one word
 -- per chip from the current sample row -- offsets ch, 32+ch, 64+ch -- over
 -- a few cycles, then acks every model at once with its own lane. There are
--- SLOT_CLOCKS (119) clocks between retires and this takes about fourteen.
+-- SLOT_CLOCKS (122) clocks between retires and this takes about fourteen.
 --
 -- BRAM LAYOUT
 --   Two halves of SAMPLES_PER_HALF rows, each row TOTAL_CHANNELS 16-bit

@@ -39,9 +39,10 @@ architecture sim of tb_argus_frame_assembler is
 
   constant chip_count  : natural := 3;
   constant ch_per_chip : natural := 32;
-  constant aux_slots   : natural := 3;
-  constant slot_clocks : natural := 119;
-  constant sclk_div    : natural := 5;
+  constant aux_slots   : natural := 2;
+  constant slot_clocks : natural := 122;
+  constant sclk_div    : natural := 6;
+  constant sweep_pad   : natural := 17;
 
   constant total_channels : natural := chip_count * ch_per_chip;
 
@@ -147,7 +148,8 @@ begin
       ch_per_chip => CH_PER_CHIP,
       aux_slots   => AUX_SLOTS,
       slot_clocks => SLOT_CLOCKS,
-      sclk_div    => SCLK_DIV
+      sclk_div    => SCLK_DIV,
+      sweep_pad   => SWEEP_PAD
     )
     port map (
       clk          => clk,

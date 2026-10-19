@@ -22,9 +22,11 @@
 -- identical to a run on the prefix alone.
 --
 -- DRIVE
---   Each sweep is 32 amplifier slots then 3 aux slots with slot_last on the
---   third, as the master emits them. Slots are slot_gap clocks apart rather
---   than the master's 119, to keep the run short; the block needs 35 and
+--   Each sweep is 32 amplifier slots then 2 aux slots, with slot_last on
+--   the last aux slot. (The master raises slot_last on the last amplifier
+--   slot instead; argus_feature latches the sweep number per slot, so either
+--   placement counts the same sweeps.) Slots are slot_gap clocks apart rather
+--   than the master's 122, to keep the run short; the block needs 35 and
 --   must be idle when each slot arrives, and the bench checks that it is.
 --
 -- CHECK
@@ -66,7 +68,7 @@ architecture sim of tb_argus_feature is
 
   constant chip_count  : natural := 3;
   constant ch_per_chip : natural := 32;
-  constant aux_slots   : natural := 3;
+  constant aux_slots   : natural := 2;
   constant channels    : natural := chip_count * ch_per_chip;
   constant n_bins      : natural := n_sweeps / bin_len;
   constant clk_period  : time    := 8 ns;
@@ -256,7 +258,7 @@ begin
 
       end loop;
 
-      -- 3 aux slots, slot_last on the third.
+      -- Aux slots, slot_last on the last one.
       for a in 0 to aux_slots - 1 loop
 
         slot_data    <= (others => '0');

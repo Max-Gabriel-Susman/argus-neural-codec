@@ -42,7 +42,7 @@ architecture sim of tb_argus_frame_assembler_hold is
   constant ch_per_chip : natural := 32;
   constant total_ch    : natural := chip_count * ch_per_chip;
 
-  -- Clocks between slots. The real master leaves 119; anything above
+  -- Clocks between slots. The real master leaves 122; anything above
   -- chip_count is enough for the serialised lane writes, and a smaller
   -- number keeps the simulation short.
   constant slot_gap : natural := 20;

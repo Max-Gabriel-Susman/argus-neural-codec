@@ -50,9 +50,10 @@ entity argus_acq_top is
     c_s_axi_addr_width : natural := 12;
     chip_count         : natural := 3;
     ch_per_chip        : natural := 32;
-    aux_slots          : natural := 3;
-    slot_clocks        : natural := 119;
-    sclk_div           : natural := 5;
+    aux_slots          : natural := 2;
+    slot_clocks        : natural := 122;
+    sclk_div           : natural := 6;
+    sweep_pad          : natural := 17;
     samples_per_half   : natural := 147
   );
   port (
@@ -212,7 +213,8 @@ begin
       ch_per_chip => ch_per_chip,
       aux_slots   => aux_slots,
       slot_clocks => slot_clocks,
-      sclk_div    => sclk_div
+      sclk_div    => sclk_div,
+      sweep_pad   => sweep_pad
     )
     port map (
       clk          => s_axi_aclk,

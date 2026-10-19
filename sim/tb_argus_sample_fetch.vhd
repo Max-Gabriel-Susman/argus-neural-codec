@@ -42,9 +42,10 @@ architecture sim of tb_argus_sample_fetch is
 
   constant chip_count       : natural := 3;
   constant ch_per_chip      : natural := 32;
-  constant aux_slots        : natural := 3;
-  constant slot_clocks      : natural := 119;
-  constant sclk_div         : natural := 5;
+  constant aux_slots        : natural := 2;
+  constant slot_clocks      : natural := 122;
+  constant sclk_div         : natural := 6;
+  constant sweep_pad        : natural := 17;
   constant samples_per_half : natural := 8;
 
   constant total_channels : natural := chip_count * ch_per_chip;
@@ -220,7 +221,8 @@ begin
       ch_per_chip => ch_per_chip,
       aux_slots   => aux_slots,
       slot_clocks => slot_clocks,
-      sclk_div    => sclk_div
+      sclk_div    => sclk_div,
+      sweep_pad   => sweep_pad
     )
     port map (
       clk          => clk,

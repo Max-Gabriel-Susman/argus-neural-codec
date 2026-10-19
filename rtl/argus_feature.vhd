@@ -40,7 +40,7 @@
 --
 -- STRUCTURE
 --   One datapath, time-multiplexed. The master emits one slot per channel
---   index per sweep, carrying all three chips' samples for that index, 119
+--   index per sweep, carrying all three chips' samples for that index, 122
 --   clocks apart. This block serialises the three chips and walks each
 --   sample through the arithmetic in eleven clocks -- 35 per slot -- against
 --   state held in a 96-entry RAM, one 136-bit word per channel. Nothing is
